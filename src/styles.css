@@ -1,0 +1,1344 @@
+@font-face {
+  font-family: "Roboto";
+  src: url("./assets/fonts/roboto/roboto-400.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Roboto";
+  src: url("./assets/fonts/roboto/roboto-500.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Roboto";
+  src: url("./assets/fonts/roboto/roboto-600.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #222222;
+  --nav: #191919;
+  --surface: #2c2d31;
+  --surface-3: #37383d;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --text: #ffffff;
+  --text-soft: rgba(255, 255, 255, 0.82);
+  --muted: rgba(255, 255, 255, 0.64);
+  --muted-2: rgba(255, 255, 255, 0.48);
+  --accent: #715fdc;
+  --accent-line: rgba(171, 159, 245, 0.36);
+  --success: #56d68a;
+  --success-soft: rgba(86, 214, 138, 0.14);
+  --success-line: rgba(86, 214, 138, 0.36);
+  --danger: #ff5c6c;
+  --danger-soft: rgba(255, 92, 108, 0.14);
+  --danger-line: rgba(255, 92, 108, 0.36);
+  --shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
+  --shadow-soft: 0 10px 26px rgba(0, 0, 0, 0.18);
+  --font-sans: "Roboto", Arial, sans-serif;
+  font-family: var(--font-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+body {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-feature-settings: "kern";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.45;
+}
+
+body.template-drag-active {
+  cursor: grabbing;
+  user-select: none;
+}
+
+button {
+  color: inherit;
+  font: inherit;
+}
+
+noscript {
+  display: block;
+  padding: 24px;
+  color: var(--text);
+}
+
+.app-shell {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.view {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 24px 16px calc(104px + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tab-view[hidden] {
+  display: none;
+}
+
+.home-screen {
+  min-height: calc(100vh - 128px - env(safe-area-inset-bottom));
+  min-height: calc(100svh - 128px - env(safe-area-inset-bottom));
+}
+
+.screen-header {
+  display: grid;
+  gap: 7px;
+  padding: 2px 2px 4px;
+}
+
+.screen-subtitle {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  color: var(--text);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.06;
+}
+
+h2 {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.18;
+}
+
+.cycle-summary,
+.panel,
+.workout-card,
+.empty-state {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.cycle-summary {
+  display: grid;
+  gap: 13px;
+  min-width: 0;
+  padding: 14px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.cycle-summary-main,
+.card-topline,
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cycle-summary-main > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.summary-label,
+.cycle-summary span,
+.muted,
+.section-title small {
+  color: var(--muted);
+}
+
+.summary-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cycle-summary strong {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.08;
+}
+
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.workout-list,
+.plan-list,
+.plan-summary-grid,
+.action-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.home-workout-list {
+  flex: 1;
+  grid-template-rows: repeat(3, minmax(108px, 1fr));
+  min-height: 320px;
+}
+
+.home-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 0;
+}
+
+.home-section-title span {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.workout-card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 112px;
+  padding: 16px;
+  overflow: hidden;
+  --illustration-right: 5px;
+  --illustration-max-width: 52%;
+  --illustration-height: calc(100% + 12px);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.workout-card-button {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.workout-card-button:active {
+  border-color: var(--accent-line);
+}
+
+.workout-card[data-illustration="2"] {
+  --illustration-right: -10px;
+  --illustration-max-width: 56%;
+  --illustration-height: calc(100% + 18px);
+}
+
+.workout-card[data-illustration="3"] {
+  --illustration-right: -5px;
+  --illustration-max-width: 60%;
+  --illustration-height: calc(100% + 12px);
+}
+
+.workout-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+  content: "";
+}
+
+.workout-card-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: space-between;
+  gap: 12px;
+  width: min(56%, 300px);
+  min-width: 0;
+  min-height: 100%;
+}
+
+.workout-card-copy {
+  min-width: 0;
+}
+
+.workout-name-stack {
+  display: grid;
+  gap: 2px;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.workout-name-line {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: clamp(30px, 9vw, 42px);
+  font-weight: 600;
+  line-height: 0.98;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workout-name-line + .workout-name-line {
+  color: var(--text);
+}
+
+.workout-name-stack.is-single-name .workout-name-line {
+  font-size: clamp(26px, 7.5vw, 38px);
+  line-height: 1;
+}
+
+.card-topline {
+  width: 100%;
+}
+
+.card-topline h2,
+.section-title span,
+.plan-row strong {
+  min-width: 0;
+}
+
+.workout-card-image {
+  position: absolute;
+  top: 50%;
+  right: var(--illustration-right);
+  z-index: 0;
+  width: auto;
+  max-width: var(--illustration-max-width);
+  height: var(--illustration-height);
+  object-fit: contain;
+  transform: translateY(-50%);
+  pointer-events: none;
+  user-select: none;
+}
+
+.workout-last-label {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.workout-last-label.is-empty {
+  color: var(--text-soft);
+}
+
+.workout-prep-screen {
+  gap: 14px;
+}
+
+.plan-row .prep-template-title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.prep-template-select {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  justify-content: space-between;
+}
+
+.prep-template-select:active {
+  border-color: var(--accent-line);
+}
+
+.plan-row .prep-template-title strong {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: 500;
+}
+
+.plan-row .prep-template-title span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-row .prep-template-title span.is-missing {
+  color: var(--danger);
+}
+
+.select-chevron {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-right: 3px solid var(--text-soft);
+  border-bottom: 3px solid var(--text-soft);
+  transform: rotate(45deg) translateY(-2px);
+  margin-right: 3px;
+}
+
+.template-select-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.template-select-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgba(0, 0, 0, 0.44);
+}
+
+.template-select-sheet {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+  max-height: min(72dvh, 540px);
+  margin: 0 auto;
+  padding: 14px 14px calc(16px + env(safe-area-inset-bottom));
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  background: var(--surface);
+  box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.36);
+}
+
+.template-select-handle {
+  justify-self: center;
+  width: 52px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.template-select-option {
+  min-height: 62px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.template-select-list {
+  display: grid;
+  gap: 9px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 2px;
+  overscroll-behavior: contain;
+}
+
+.template-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  appearance: none;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.template-select-option span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-select-option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text);
+}
+
+.template-select-check {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.prep-plan-list,
+.previous-workout-list {
+  display: grid;
+  gap: 12px;
+}
+
+.prep-plan-group {
+  display: grid;
+  gap: 8px;
+}
+
+.prep-group-title {
+  padding: 0 2px;
+}
+
+.prep-group-title strong,
+.previous-workout-group strong,
+.previous-workout-date {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.prep-exercise-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prep-exercise-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.prep-exercise-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prep-exercise-row span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.prep-exercise-row.is-missing strong,
+.prep-exercise-row.is-missing span {
+  color: var(--danger);
+}
+
+.previous-workout-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.previous-workout-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.previous-workout-group {
+  display: grid;
+  gap: 4px;
+}
+
+.previous-workout-group p {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.compact-empty-state {
+  min-height: 92px;
+  padding: 16px;
+}
+
+.compact-empty-state h2 {
+  font-size: 16px;
+}
+
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 15px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.section-title span {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.plan-screen {
+  gap: 14px;
+}
+
+.plan-section {
+  gap: 12px;
+}
+
+.plan-list {
+  gap: 8px;
+}
+
+.plan-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 50px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.plan-cycle-row {
+  padding-left: 12px;
+}
+
+.plan-row strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/*.plan-row span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}*/
+
+.plan-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.plan-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 68px;
+  padding: 12px 14px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.plan-summary-button {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  text-align: left;
+}
+
+.plan-summary-button:active {
+  border-color: var(--accent-line);
+  background: var(--surface-3);
+}
+
+.plan-summary-card-copy {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.plan-summary-card-copy strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.plan-summary-card-copy span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.click-indicator {
+  display: block;
+  width: 26px;
+  height: 22px;
+  margin-left: auto;
+}
+
+.click-indicator line {
+  stroke: currentColor;
+  stroke-width: 2px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.back-button {
+  justify-self: start;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.template-list {
+  display: grid;
+  gap: 10px;
+}
+
+.template-card {
+  display: grid;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.template-card-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.template-card-topline h2 {
+  min-width: 0;
+  font-size: 17px;
+}
+
+.template-edit-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  padding: 0;
+}
+
+.template-edit-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.template-exercise-block {
+  display: grid;
+  gap: 8px;
+}
+
+.template-form {
+  display: grid;
+  gap: 14px;
+}
+
+.form-field {
+  display: grid;
+  gap: 8px;
+}
+
+.form-input {
+  min-height: 52px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  padding: 0 13px;
+}
+
+.form-input::placeholder {
+  color: var(--muted-2);
+}
+
+.form-input:focus {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.form-input:read-only {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.template-exercise-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.template-choice-list {
+  display: grid;
+  gap: 8px;
+}
+
+.template-builder-section {
+  gap: 10px;
+}
+
+.icon-wrap {
+  display: contents;
+}
+
+.plan-row .icon-wrap svg,
+.template-select-option .icon-wrap svg {
+  width: 18px;
+  height: 18px;
+}
+
+.template-builder-scroll {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  height: clamp(178px, 28vh, 236px);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.template-builder-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.template-builder-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.template-builder-empty {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 22px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.template-base-list {
+  display: grid;
+  gap: 8px;
+}
+
+.template-selected-item {
+  display: flex;
+  gap: 0px;
+  min-height: 50px;
+  padding: 8px 7px 8px 9px;
+}
+
+.template-selected-item.is-dragging {
+  border-color: var(--accent);
+  background: var(--surface-3);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.36), 0 0 0 1px var(--accent);
+  cursor: grabbing;
+  transform: scale(1.015);
+}
+
+.template-selected-item.is-missing {
+  border-color: var(--danger-line);
+}
+
+.template-selected-placeholder {
+  min-height: 50px;
+  border: 1px dashed var(--accent-line);
+  border-radius: 8px;
+  background: rgba(113, 95, 220, 0.12);
+}
+
+.template-drag-handle,
+.template-remove-button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+}
+
+.template-drag-handle {
+  cursor: grab;
+  touch-action: none;
+}
+
+.template-drag-handle:active {
+  cursor: grabbing;
+}
+
+.template-drag-grip {
+  display: grid;
+  grid-template-columns: repeat(2, 7px);
+  grid-template-rows: repeat(2, 9px);
+}
+
+.template-drag-grip span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.template-selected-number {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  margin: 0 5px;
+}
+
+.template-selected-name,
+.template-base-exercise-button .template-choice-name {
+  min-width: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-selected-name {
+  flex: 1 1 auto;
+}
+
+.template-selected-item.is-missing .template-selected-name {
+  color: var(--danger);
+}
+
+.template-remove-button {
+  position: relative;
+}
+
+.template-remove-button::before,
+.template-remove-button::after {
+  position: absolute;
+  width: 15px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--text);
+  content: "";
+}
+
+.template-remove-button::before {
+  transform: rotate(45deg);
+}
+
+.template-remove-button::after {
+  transform: rotate(-45deg);
+}
+
+.template-base-exercise-button {
+  width: 100%;
+  justify-content: space-between;
+  color: var(--text);
+  text-align: left;
+}
+
+.template-base-exercise-button.is-selected {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.template-base-exercise-button.is-selected:active {
+  background: var(--accent);
+}
+
+.template-base-status {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.template-choice-row {
+  position: relative;
+  min-height: 50px;
+}
+
+.template-choice-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.template-choice-box {
+  display: grid;
+  place-items: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.template-choice-input:checked + .template-choice-box {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.template-choice-input:checked + .template-choice-box::after {
+  width: 8px;
+  height: 4px;
+  border-bottom: 2px solid var(--text);
+  border-left: 2px solid var(--text);
+  content: "";
+  transform: rotate(-45deg) translateY(-1px);
+}
+
+.template-choice-name {
+  color: var(--text-soft);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.template-exercise-item {
+  min-height: 38px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.template-exercise-item.is-missing {
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+.create-template-button {
+  background: var(--accent);
+  color: var(--text);
+}
+
+.data-section {
+  border-color: var(--line);
+}
+
+.action-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 54px;
+  width: 100%;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.action-button svg {
+  width: 21px;
+  height: 21px;
+}
+
+.action-button:disabled {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  opacity: 0.58;
+}
+
+.danger-action {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--text);
+}
+
+.empty-state {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  min-height: 230px;
+  padding: 26px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.empty-state svg {
+  width: 42px;
+  height: 42px;
+  color: var(--accent);
+}
+
+.empty-state h2 {
+  max-width: 270px;
+  color: var(--text);
+  font-size: 18px;
+}
+
+.error-state p {
+  color: var(--danger);
+}
+
+.loading-screen {
+  min-height: 60vh;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+}
+
+.loader {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.notice {
+  position: fixed;
+  right: 16px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  left: 16px;
+  z-index: 8;
+  max-width: 528px;
+  min-height: 48px;
+  margin: 0 auto;
+  padding: 13px 15px;
+  border: 1px solid var(--text);
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--nav);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.25;
+  box-shadow: var(--shadow-soft);
+  pointer-events: none;
+  text-align: center;
+}
+
+.notice-success {
+  border-color: var(--text);
+}
+
+.notice-error {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--text);
+}
+
+.install-app-button {
+  position: fixed;
+  top: calc(18px + env(safe-area-inset-top));
+  right: max(16px, calc((100vw - 560px) / 2 + 16px));
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+}
+
+.install-app-button svg {
+  width: 21px;
+  height: 21px;
+}
+
+.install-app-button.is-ready {
+  background: var(--accent);
+  color: var(--text);
+}
+
+.install-app-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.bottom-nav {
+  position: fixed;
+  right: 16px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  left: 16px;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-width: 528px;
+  min-height: 66px;
+  margin: 0 auto;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 24px;
+  background: var(--nav);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(18px);
+}
+
+.nav-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 50px;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--text-soft);
+}
+
+.nav-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.nav-button.is-active {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.nav-button.is-active::after {
+  position: absolute;
+  bottom: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+}
+
+.nav-button:focus-visible,
+.back-button:focus-visible,
+.workout-card-button:focus-visible,
+.prep-template-select:focus-visible,
+.template-select-option:focus-visible,
+.plan-summary-button:focus-visible,
+.template-edit-button:focus-visible,
+.action-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (min-width: 620px) {
+  .app-shell {
+    border-right: 1px solid var(--line);
+    border-left: 1px solid var(--line);
+  }
+
+  .view {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+}
