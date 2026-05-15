@@ -137,6 +137,15 @@ function applyHistoryEntry(current, entry) {
   return next;
 }
 
+function createNextState(current, patch) {
+  return {
+    ...current,
+    ...patch,
+    homeView: patch.homeView ? normalizeHomeView(patch.homeView) : current.homeView,
+    planView: patch.planView ? normalizePlanView(patch.planView) : current.planView,
+  };
+}
+
 function getPlanBackTarget(planView) {
   const normalized = normalizePlanView(planView);
 
@@ -159,6 +168,30 @@ function getPlanBackTarget(planView) {
     default:
       return null;
   }
+}
+
+function getLocalBackTarget(appState) {
+  if (appState.activeTab === "home" && appState.homeView.name === "activeWorkout") {
+    const session = getActiveWorkoutSessionFromState(appState);
+
+    return {
+      activeTab: "home",
+      homeView: {
+        name: "preparation",
+        workoutGroupId: session?.workoutGroupId ?? appState.homeView.workoutGroupId,
+      },
+    };
+  }
+
+  if (appState.activeTab === "home" && appState.homeView.name !== "overview") {
+    return { activeTab: "home", homeView: { name: "overview" } };
+  }
+
+  if (appState.activeTab === "plan") {
+    return getPlanBackTarget(appState.planView);
+  }
+
+  return null;
 }
 
 function pluralRu(value, one, few, many) {
@@ -543,12 +576,7 @@ function App() {
   const navigate = useCallback(
     (patch, { history = "push", scroll = "top" } = {}) => {
       const current = stateRef.current;
-      const next = {
-        ...current,
-        ...patch,
-        homeView: patch.homeView ? normalizeHomeView(patch.homeView) : current.homeView,
-        planView: patch.planView ? normalizePlanView(patch.planView) : current.planView,
-      };
+      const next = createNextState(current, patch);
 
       if (current.activeTab === "plan" && history === "push") {
         saveCurrentScrollPosition();
@@ -579,37 +607,14 @@ function App() {
 
   const goBack = useCallback(() => {
     const current = stateRef.current;
+    const target = getLocalBackTarget(current);
 
-    if (current.activeTab === "home" && current.homeView.name === "activeWorkout") {
-      const session = getActiveWorkoutSessionFromState(current);
-      navigate(
-        {
-          activeTab: "home",
-          homeView: {
-            name: "preparation",
-            workoutGroupId: session?.workoutGroupId ?? current.homeView.workoutGroupId,
-          },
-        },
-        { history: "replace", scroll: "top" },
-      );
+    if (target) {
+      navigate(target, {
+        history: "replace",
+        scroll: target.activeTab === "plan" ? "restore" : "top",
+      });
       return;
-    }
-
-    if (current.activeTab === "home" && current.homeView.name !== "overview") {
-      navigate(
-        { activeTab: "home", homeView: { name: "overview" } },
-        { history: "replace", scroll: "top" },
-      );
-      return;
-    }
-
-    if (current.activeTab === "plan") {
-      const target = getPlanBackTarget(current.planView);
-
-      if (target) {
-        navigate(target, { history: "replace", scroll: "restore" });
-        return;
-      }
     }
 
     if (window.history.state?.tag === HISTORY_TAG) {
@@ -631,6 +636,23 @@ function App() {
       const entry = event.state;
 
       if (!entry || entry.tag !== HISTORY_TAG) {
+        return;
+      }
+
+      const target = getLocalBackTarget(stateRef.current);
+
+      if (target) {
+        const next = createNextState(stateRef.current, target);
+        stateRef.current = next;
+        setState(next);
+        window.history.replaceState(createHistoryEntry(next), "");
+
+        if (next.activeTab === "plan") {
+          requestAnimationFrame(() => restoreScrollPosition(next.planView));
+        } else {
+          requestAnimationFrame(() => getViewElement()?.scrollTo({ top: 0 }));
+        }
+
         return;
       }
 
