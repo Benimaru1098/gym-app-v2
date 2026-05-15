@@ -579,6 +579,232 @@ export async function deleteExerciseTemplate(templateId) {
   }
 }
 
+function parseWeightKg(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const number = Number(String(value).replace(",", "."));
+  return Number.isFinite(number) ? number : null;
+}
+
+function parseReps(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const number = Number.parseInt(String(value), 10);
+  return Number.isInteger(number) ? number : null;
+}
+
+function normalizeCompletedSets(sets = []) {
+  return sets
+    .map((set, index) => ({
+      setNumber: index + 1,
+      weightKg: parseWeightKg(set.weightKg),
+      reps: parseReps(set.reps),
+    }))
+    .filter((set) => set.weightKg !== null || set.reps !== null);
+}
+
+function createWorkoutLogFromSession(session, completedAt) {
+  const exerciseLogs = (session.exerciseLogs ?? []).map((exerciseLog) => ({
+    exerciseId: exerciseLog.exerciseId,
+    exerciseNameSnapshot: exerciseLog.exerciseNameSnapshot,
+    plannedExerciseId: exerciseLog.plannedExerciseId ?? exerciseLog.exerciseId,
+    plannedExerciseNameSnapshot: exerciseLog.plannedExerciseNameSnapshot ?? exerciseLog.exerciseNameSnapshot,
+    muscleGroupId: exerciseLog.muscleGroupId,
+    muscleGroupNameSnapshot: exerciseLog.muscleGroupNameSnapshot,
+    templateId: exerciseLog.templateId ?? null,
+    templateNameSnapshot: exerciseLog.templateNameSnapshot ?? null,
+    trackingType: exerciseLog.trackingType ?? "weight_reps",
+    isReplacement: Boolean(
+      (exerciseLog.plannedExerciseId ?? exerciseLog.exerciseId) !== exerciseLog.exerciseId,
+    ),
+    replacement: exerciseLog.replacement ?? null,
+    sets: normalizeCompletedSets(exerciseLog.sets),
+  }));
+
+  return {
+    id: session.logId ?? `log-${session.id}`,
+    date: completedAt,
+    startedAt: session.startedAt ?? completedAt,
+    completedAt,
+    workoutGroupId: session.workoutGroupId,
+    workoutGroupSnapshot: session.workoutGroupSnapshot,
+    muscleGroupLogs: (session.muscleGroupSnapshots ?? []).map((muscleGroup) => {
+      const groupExerciseLogs = exerciseLogs.filter(
+        (exerciseLog) => exerciseLog.muscleGroupId === muscleGroup.id,
+      );
+      const templateSnapshot = (session.templateSnapshots ?? []).find(
+        (template) => template.muscleGroupId === muscleGroup.id,
+      );
+
+      return {
+        muscleGroupId: muscleGroup.id,
+        muscleGroupNameSnapshot: muscleGroup.name,
+        templateId: templateSnapshot?.id ?? null,
+        templateNameSnapshot: templateSnapshot?.name ?? null,
+        exerciseLogs: groupExerciseLogs,
+      };
+    }),
+    templateSnapshots: session.templateSnapshots ?? [],
+    exerciseLogs,
+  };
+}
+
+function getUpdatedCycleAfterWorkout(cycle, workoutGroupId) {
+  if (!cycle.workoutGroupIds?.includes(workoutGroupId)) {
+    return cycle;
+  }
+
+  const workoutGroupIds = cycle.workoutGroupIds;
+  const completedSet = new Set(
+    (cycle.completedWorkoutGroupIdsInCurrentRound ?? []).filter((id) =>
+      workoutGroupIds.includes(id),
+    ),
+  );
+
+  completedSet.add(workoutGroupId);
+
+  return {
+    ...cycle,
+    currentIndex: (workoutGroupIds.indexOf(workoutGroupId) + 1) % workoutGroupIds.length,
+    completedWorkoutGroupIdsInCurrentRound: [...completedSet],
+  };
+}
+
+export async function saveActiveWorkoutSession(session) {
+  const database = await openAppDatabase();
+
+  try {
+    const metadata = await readMetadata(database);
+    const now = new Date().toISOString();
+    const transaction = database.transaction(["metadata", "activeWorkoutSessions"], "readwrite");
+    const done = transactionDone(transaction);
+
+    transaction.objectStore("activeWorkoutSessions").put({
+      ...session,
+      status: "active",
+      updatedAt: session.updatedAt ?? now,
+    });
+    transaction.objectStore("metadata").put({
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: metadata?.createdAt ?? now,
+      updatedAt: now,
+    });
+
+    await done;
+  } finally {
+    database.close();
+  }
+}
+
+export async function deleteActiveWorkoutSessionsForWorkoutGroup(workoutGroupId) {
+  const database = await openAppDatabase();
+
+  try {
+    const metadata = await readMetadata(database);
+    const activeWorkoutSessions = await readStore(database, "activeWorkoutSessions");
+    const sessionsToDelete = activeWorkoutSessions.filter(
+      (session) => session.workoutGroupId === workoutGroupId,
+    );
+
+    if (!sessionsToDelete.length) {
+      return { deletedCount: 0 };
+    }
+
+    const now = new Date().toISOString();
+    const transaction = database.transaction(["metadata", "activeWorkoutSessions"], "readwrite");
+    const done = transactionDone(transaction);
+    const sessionStore = transaction.objectStore("activeWorkoutSessions");
+
+    for (const session of sessionsToDelete) {
+      sessionStore.delete(session.id);
+    }
+
+    transaction.objectStore("metadata").put({
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: metadata?.createdAt ?? now,
+      updatedAt: now,
+    });
+
+    await done;
+    return { deletedCount: sessionsToDelete.length };
+  } finally {
+    database.close();
+  }
+}
+
+export async function finishActiveWorkoutSession(session) {
+  const database = await openAppDatabase();
+
+  try {
+    const metadata = await readMetadata(database);
+    const workoutCycles = await readStore(database, "workoutCycles");
+    const exercises = await readStore(database, "exercises");
+    const templates = await readStore(database, "exerciseTemplates");
+    const activeWorkoutSessions = await readStore(database, "activeWorkoutSessions");
+    const completedAt = new Date().toISOString();
+    const workoutLog = createWorkoutLogFromSession(session, completedAt);
+    const usedExerciseIds = new Set((session.exerciseLogs ?? []).map((log) => log.exerciseId).filter(Boolean));
+    const usedTemplateIds = new Set((session.templateSnapshots ?? []).map((template) => template.id).filter(Boolean));
+    const transaction = database.transaction(
+      ["metadata", "activeWorkoutSessions", "workoutLogs", "workoutCycles", "exercises", "exerciseTemplates"],
+      "readwrite",
+    );
+    const done = transactionDone(transaction);
+    const exerciseStore = transaction.objectStore("exercises");
+    const templateStore = transaction.objectStore("exerciseTemplates");
+    const cycleStore = transaction.objectStore("workoutCycles");
+    const activeSessionStore = transaction.objectStore("activeWorkoutSessions");
+
+    transaction.objectStore("workoutLogs").put(workoutLog);
+
+    for (const activeSession of activeWorkoutSessions) {
+      if (activeSession.workoutGroupId === session.workoutGroupId) {
+        activeSessionStore.delete(activeSession.id);
+      }
+    }
+
+    for (const cycle of workoutCycles) {
+      cycleStore.put(getUpdatedCycleAfterWorkout(cycle, session.workoutGroupId));
+    }
+
+    for (const exercise of exercises) {
+      if (usedExerciseIds.has(exercise.id)) {
+        exerciseStore.put({
+          ...exercise,
+          usageCount: Number(exercise.usageCount ?? 0) + 1,
+        });
+      }
+    }
+
+    for (const template of templates) {
+      if (usedTemplateIds.has(template.id)) {
+        templateStore.put({
+          ...template,
+          usageCount: Number(template.usageCount ?? 0) + 1,
+        });
+      }
+    }
+
+    transaction.objectStore("metadata").put({
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: metadata?.createdAt ?? completedAt,
+      updatedAt: completedAt,
+    });
+
+    await done;
+    return workoutLog;
+  } finally {
+    database.close();
+  }
+}
+
 export async function clearWorkoutLogs() {
   const database = await openAppDatabase();
 

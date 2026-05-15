@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearWorkoutLogs,
+  deleteActiveWorkoutSessionsForWorkoutGroup,
   deleteExercise,
   deleteExerciseTemplate,
   exportAppData,
+  finishActiveWorkoutSession,
   loadAppData,
+  saveActiveWorkoutSession,
   saveExercise,
   saveExerciseTemplate,
   saveWorkoutGroupSelectedTemplate,
 } from "./data/storage.js";
 import { TRACKING_TYPES } from "./data/seed.js";
 import {
+  buildActiveWorkoutSessionDraft,
   buildCycleItems,
   buildExerciseCreationData,
   buildExerciseEditingData,
@@ -23,6 +27,7 @@ import {
   buildWorkoutGroupCards,
   buildWorkoutPreparationData,
   getCycleProgress,
+  getLastSetsForExercise,
 } from "./domain/selectors.js";
 import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
 import { icon } from "./ui/icons.js";
@@ -46,6 +51,8 @@ const TEMPLATE_DRAG_MAX_SCROLL_STEP = 18;
 function createInitialState() {
   return {
     activeTab: "home",
+    activeWorkoutSession: null,
+    activeExerciseReplacement: null,
     canInstall: false,
     data: null,
     error: null,
@@ -65,6 +72,10 @@ function createInitialState() {
 function normalizeHomeView(view) {
   if (view?.name === "preparation") {
     return { name: "preparation", workoutGroupId: view.workoutGroupId };
+  }
+
+  if (view?.name === "activeWorkout") {
+    return { name: "activeWorkout", sessionId: view.sessionId, workoutGroupId: view.workoutGroupId ?? null };
   }
 
   return { name: "overview", workoutGroupId: null };
@@ -185,6 +196,84 @@ function formatDate(dateValue) {
   }
 
   return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
+}
+
+function formatSetList(sets) {
+  const labels = (sets ?? [])
+    .map((set) => {
+      if (set.weightKg === undefined || set.weightKg === null || set.reps === undefined || set.reps === null) {
+        return null;
+      }
+
+      return `${formatWeightValue(set.weightKg)}×${set.reps}`;
+    })
+    .filter(Boolean);
+
+  return labels.length ? labels.join(" · ") : "ещё не было";
+}
+
+function normalizeWeightInput(value) {
+  const cleaned = String(value).replace(/[^\d,.]/g, "");
+  const separatorIndex = cleaned.search(/[,.]/);
+
+  if (separatorIndex === -1) {
+    return cleaned;
+  }
+
+  return `${cleaned.slice(0, separatorIndex + 1)}${cleaned.slice(separatorIndex + 1).replace(/[,.]/g, "")}`;
+}
+
+function normalizeRepsInput(value) {
+  return String(value).replace(/\D/g, "");
+}
+
+function renumberSetRows(sets) {
+  return sets.map((set, index) => ({
+    ...set,
+    setNumber: index + 1,
+  }));
+}
+
+function createActiveSetRowsFromPrevious(previousSets) {
+  const sourceSets = previousSets.length
+    ? previousSets
+    : Array.from({ length: 4 }, (_, index) => ({ setNumber: index + 1, weightKg: "", reps: "" }));
+
+  return sourceSets.map((set, index) => ({
+    setNumber: index + 1,
+    weightKg: set.weightKg === undefined || set.weightKg === null ? "" : String(set.weightKg),
+    reps: set.reps === undefined || set.reps === null ? "" : String(set.reps),
+  }));
+}
+
+function getActiveWorkoutSessionFromState(appState) {
+  const homeSessionId = appState.homeView?.name === "activeWorkout" ? appState.homeView.sessionId : null;
+
+  if (appState.activeWorkoutSession && (!homeSessionId || appState.activeWorkoutSession.id === homeSessionId)) {
+    return appState.activeWorkoutSession;
+  }
+
+  if (!homeSessionId) {
+    return appState.activeWorkoutSession;
+  }
+
+  return appState.data?.activeWorkoutSessions?.find((session) => session.id === homeSessionId) ?? null;
+}
+
+function getActiveWorkoutSessionForGroup(appState, workoutGroupId) {
+  const sessions = [
+    ...(appState.data?.activeWorkoutSessions ?? []),
+    appState.activeWorkoutSession,
+  ]
+    .filter(Boolean)
+    .filter((session) => session.workoutGroupId === workoutGroupId && session.status !== "completed");
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+
+  return [...sessionsById.values()].sort((a, b) => {
+    const firstTime = new Date(a.updatedAt ?? a.startedAt ?? 0).getTime();
+    const secondTime = new Date(b.updatedAt ?? b.startedAt ?? 0).getTime();
+    return secondTime - firstTime;
+  })[0] ?? null;
 }
 
 function createId(prefix) {
@@ -332,6 +421,7 @@ function App() {
   const deferredInstallPromptRef = useRef(null);
   const scrollPositionsRef = useRef(new Map());
   const templateDragRef = useRef(null);
+  const activeWorkoutSaveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     stateRef.current = state;
@@ -436,6 +526,15 @@ function App() {
 
   const goBack = useCallback(() => {
     const current = stateRef.current;
+    if (current.activeTab === "home" && current.homeView.name === "activeWorkout") {
+      const session = getActiveWorkoutSessionFromState(current);
+      navigate(
+        { homeView: { name: "preparation", workoutGroupId: session?.workoutGroupId ?? current.homeView.workoutGroupId } },
+        { history: "replace" },
+      );
+      return;
+    }
+
     if (current.activeTab === "home" && current.homeView.name !== "overview") {
       navigate({ homeView: { name: "overview" } }, { history: "replace" });
       return;
@@ -473,6 +572,7 @@ function App() {
         activeTab: entry.activeTab || "home",
         homeView: normalizeHomeView(entry.homeView),
         planView: normalizePlanView(entry.planView),
+        activeExerciseReplacement: null,
         templateSelector: null,
       }));
 
@@ -635,6 +735,7 @@ function App() {
 
       if (tabId !== current.activeTab) {
         nextPatch.templateSelector = null;
+        nextPatch.activeExerciseReplacement = null;
       }
 
       const hasOpenNestedView = current.homeView.name !== "overview" || current.planView.name !== "overview";
@@ -751,9 +852,354 @@ function App() {
     [patchState, refreshData, showNotice],
   );
 
-  const startWorkoutPlaceholder = useCallback(() => {
-    showNotice("Экран тренировки будет на следующем этапе");
-  }, [showNotice]);
+  const persistActiveWorkoutSession = useCallback(
+    (session, { showError = false } = {}) => {
+      const saveTask = () => saveActiveWorkoutSession(session);
+
+      activeWorkoutSaveQueueRef.current = activeWorkoutSaveQueueRef.current
+        .catch(() => {})
+        .then(saveTask);
+
+      return activeWorkoutSaveQueueRef.current.catch((error) => {
+        console.error(error);
+        if (showError) {
+          showNotice("Не удалось сохранить тренировку", "error");
+        }
+      });
+    },
+    [showNotice],
+  );
+
+  const setActiveWorkoutSession = useCallback(
+    (session) => {
+      const nextSession = {
+        ...session,
+        updatedAt: new Date().toISOString(),
+      };
+
+      stateRef.current = {
+        ...stateRef.current,
+        activeWorkoutSession: nextSession,
+      };
+      patchState({ activeWorkoutSession: nextSession });
+      return nextSession;
+    },
+    [patchState],
+  );
+
+  const updateActiveWorkoutSession = useCallback(
+    (updater, { showError = false } = {}) => {
+      const currentSession = getActiveWorkoutSessionFromState(stateRef.current);
+
+      if (!currentSession) {
+        return null;
+      }
+
+      const nextSession = setActiveWorkoutSession(updater(currentSession));
+      persistActiveWorkoutSession(nextSession, { showError });
+      return nextSession;
+    },
+    [persistActiveWorkoutSession, setActiveWorkoutSession],
+  );
+
+  const handleStartWorkout = useCallback(
+    async (workoutGroupId) => {
+      const current = stateRef.current;
+      const unfinishedSession = getActiveWorkoutSessionForGroup(current, workoutGroupId);
+
+      if (unfinishedSession && !window.confirm("Начать новую тренировку? Прошлая незавершённая тренировка будет удалена.")) {
+        return;
+      }
+
+      const startedAt = new Date().toISOString();
+      const session = buildActiveWorkoutSessionDraft(
+        current.data,
+        workoutGroupId,
+        createId("active-workout"),
+        startedAt,
+      );
+
+      if (!session) {
+        showNotice("Тренировка не найдена", "error");
+        return;
+      }
+
+      if (!session.exerciseLogs.length) {
+        showNotice("В плане нет упражнений", "error");
+        return;
+      }
+
+      try {
+        if (unfinishedSession) {
+          await activeWorkoutSaveQueueRef.current.catch(() => {});
+          await deleteActiveWorkoutSessionsForWorkoutGroup(workoutGroupId);
+        }
+
+        await saveActiveWorkoutSession(session);
+        const refreshedData = await refreshData();
+        navigate(
+          {
+            activeTab: "home",
+            activeWorkoutSession: session,
+            activeExerciseReplacement: null,
+            data: refreshedData,
+            homeView: { name: "activeWorkout", sessionId: session.id, workoutGroupId },
+          },
+          { history: "push", scroll: "top" },
+        );
+        showNotice("Тренировка начата");
+      } catch (error) {
+        console.error(error);
+        showNotice("Не удалось начать тренировку", "error");
+      }
+    },
+    [navigate, refreshData, showNotice],
+  );
+
+  const handleContinueWorkout = useCallback(
+    (sessionId) => {
+      const current = stateRef.current;
+      const session = current.activeWorkoutSession?.id === sessionId
+        ? current.activeWorkoutSession
+        : current.data?.activeWorkoutSessions?.find((item) => item.id === sessionId) ?? null;
+
+      if (!session) {
+        showNotice("Незавершённая тренировка не найдена", "error");
+        return;
+      }
+
+      navigate(
+        {
+          activeTab: "home",
+          activeWorkoutSession: session,
+          activeExerciseReplacement: null,
+          homeView: { name: "activeWorkout", sessionId: session.id, workoutGroupId: session.workoutGroupId },
+        },
+        { history: "push", scroll: "top" },
+      );
+    },
+    [navigate, showNotice],
+  );
+
+  const handleActiveSetChange = useCallback(
+    (exerciseIndex, setIndex, field, value) => {
+      const normalizedValue = field === "weightKg" ? normalizeWeightInput(value) : normalizeRepsInput(value);
+
+      updateActiveWorkoutSession((session) => ({
+        ...session,
+        exerciseLogs: session.exerciseLogs.map((exerciseLog, currentExerciseIndex) => {
+          if (currentExerciseIndex !== exerciseIndex) {
+            return exerciseLog;
+          }
+
+          return {
+            ...exerciseLog,
+            sets: renumberSetRows(
+              (exerciseLog.sets?.length ? exerciseLog.sets : [{ setNumber: 1, weightKg: "", reps: "" }]).map((set, currentSetIndex) =>
+                currentSetIndex === setIndex ? { ...set, [field]: normalizedValue } : set,
+              ),
+            ),
+          };
+        }),
+      }));
+    },
+    [updateActiveWorkoutSession],
+  );
+
+  const handleAddActiveSet = useCallback(
+    (exerciseIndex) => {
+      updateActiveWorkoutSession((session) => ({
+        ...session,
+        exerciseLogs: session.exerciseLogs.map((exerciseLog, currentExerciseIndex) => {
+          if (currentExerciseIndex !== exerciseIndex) {
+            return exerciseLog;
+          }
+
+          return {
+            ...exerciseLog,
+            sets: renumberSetRows([
+              ...(exerciseLog.sets ?? []),
+              { setNumber: (exerciseLog.sets ?? []).length + 1, weightKg: "", reps: "" },
+            ]),
+          };
+        }),
+      }));
+    },
+    [updateActiveWorkoutSession],
+  );
+
+  const handleRemoveActiveSet = useCallback(
+    (exerciseIndex, setIndex) => {
+      updateActiveWorkoutSession((session) => ({
+        ...session,
+        exerciseLogs: session.exerciseLogs.map((exerciseLog, currentExerciseIndex) => {
+          if (currentExerciseIndex !== exerciseIndex) {
+            return exerciseLog;
+          }
+
+          if ((exerciseLog.sets ?? []).length <= 1) {
+            return exerciseLog;
+          }
+
+          return {
+            ...exerciseLog,
+            sets: renumberSetRows((exerciseLog.sets ?? []).filter((_, currentSetIndex) => currentSetIndex !== setIndex)),
+          };
+        }),
+      }));
+    },
+    [updateActiveWorkoutSession],
+  );
+
+  const openExerciseReplacement = useCallback((exerciseIndex) => {
+    patchState({ activeExerciseReplacement: { exerciseIndex } });
+  }, [patchState]);
+
+  const closeExerciseReplacement = useCallback(() => {
+    patchState({ activeExerciseReplacement: null });
+  }, [patchState]);
+
+  const selectReplacementExercise = useCallback(
+    (exerciseId) => {
+      const current = stateRef.current;
+      const session = getActiveWorkoutSessionFromState(current);
+      const exerciseIndex = current.activeExerciseReplacement?.exerciseIndex;
+      const exerciseLog = session?.exerciseLogs?.[exerciseIndex];
+      const exercise = current.data?.exercises?.find((item) => item.id === exerciseId && !item.isArchived);
+
+      if (!session || !exerciseLog || !exercise) {
+        showNotice("Не удалось заменить упражнение", "error");
+        return;
+      }
+
+      if (exercise.muscleGroupId !== exerciseLog.muscleGroupId) {
+        showNotice("Упражнение из другой мышцы", "error");
+        return;
+      }
+
+      const plannedExerciseId = exerciseLog.plannedExerciseId ?? exerciseLog.exerciseId;
+      const usedExerciseIds = new Set(
+        session.exerciseLogs
+          .filter((_, currentExerciseIndex) => currentExerciseIndex !== exerciseIndex)
+          .map((item) => item.exerciseId)
+          .filter(Boolean),
+      );
+
+      if (usedExerciseIds.has(exercise.id) || exercise.id === exerciseLog.exerciseId) {
+        return;
+      }
+
+      const previousSets = getLastSetsForExercise(current.data, exercise.id);
+
+      updateActiveWorkoutSession((activeSession) => ({
+        ...activeSession,
+        exerciseLogs: activeSession.exerciseLogs.map((item, currentExerciseIndex) => {
+          if (currentExerciseIndex !== exerciseIndex) {
+            return item;
+          }
+
+          const plannedExerciseNameSnapshot = item.plannedExerciseNameSnapshot ?? item.exerciseNameSnapshot;
+          const isReplacement = exercise.id !== plannedExerciseId;
+
+          return {
+            ...item,
+            exerciseId: exercise.id,
+            exerciseNameSnapshot: exercise.name,
+            plannedExerciseId,
+            plannedExerciseNameSnapshot,
+            trackingType: exercise.trackingType ?? item.trackingType,
+            previousSets,
+            replacement: isReplacement
+              ? {
+                  plannedExerciseId,
+                  plannedExerciseNameSnapshot,
+                  exerciseId: exercise.id,
+                  exerciseNameSnapshot: exercise.name,
+                  replacedAt: new Date().toISOString(),
+                }
+              : null,
+            sets: createActiveSetRowsFromPrevious(previousSets),
+          };
+        }),
+      }), { showError: true });
+
+      patchState({ activeExerciseReplacement: null });
+      showNotice("Упражнение заменено");
+    },
+    [patchState, showNotice, updateActiveWorkoutSession],
+  );
+
+  const handleActivePreviousExercise = useCallback(async () => {
+    const currentSession = getActiveWorkoutSessionFromState(stateRef.current);
+
+    if (!currentSession) {
+      return;
+    }
+
+    const previousIndex = Math.max(Number(currentSession.currentExerciseIndex ?? 0) - 1, 0);
+    const nextSession = setActiveWorkoutSession({
+      ...currentSession,
+      currentExerciseIndex: previousIndex,
+    });
+
+    await persistActiveWorkoutSession(nextSession, { showError: true });
+    requestAnimationFrame(() => getViewElement()?.scrollTo({ top: 0 }));
+  }, [persistActiveWorkoutSession, setActiveWorkoutSession]);
+
+  const handleActiveNextExercise = useCallback(async () => {
+    const currentSession = getActiveWorkoutSessionFromState(stateRef.current);
+
+    if (!currentSession) {
+      return;
+    }
+
+    const nextIndex = Math.min(
+      Number(currentSession.currentExerciseIndex ?? 0) + 1,
+      currentSession.exerciseLogs.length - 1,
+    );
+    const nextSession = setActiveWorkoutSession({
+      ...currentSession,
+      currentExerciseIndex: nextIndex,
+    });
+
+    await persistActiveWorkoutSession(nextSession, { showError: true });
+    requestAnimationFrame(() => getViewElement()?.scrollTo({ top: 0 }));
+  }, [persistActiveWorkoutSession, setActiveWorkoutSession]);
+
+  const handleFinishActiveWorkout = useCallback(async () => {
+    const currentSession = getActiveWorkoutSessionFromState(stateRef.current);
+
+    if (!currentSession) {
+      showNotice("Активная тренировка не найдена", "error");
+      return;
+    }
+
+    const finalSession = {
+      ...currentSession,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await activeWorkoutSaveQueueRef.current.catch(() => {});
+      await finishActiveWorkoutSession(finalSession);
+      activeWorkoutSaveQueueRef.current = Promise.resolve();
+      const refreshedData = await refreshData();
+      navigate(
+        {
+          activeTab: "home",
+          activeWorkoutSession: null,
+          activeExerciseReplacement: null,
+          data: refreshedData,
+          homeView: { name: "overview" },
+        },
+        { history: "replace", scroll: "top" },
+      );
+      showNotice("Тренировка сохранена");
+    } catch (error) {
+      console.error(error);
+      showNotice("Не удалось завершить тренировку", "error");
+    }
+  }, [navigate, refreshData, showNotice]);
 
   const openFullWorkoutPlaceholder = useCallback(() => {
     showNotice("Полная запись появится в журнале позже");
@@ -1039,10 +1485,19 @@ function App() {
           <HomeView
             data={state.data}
             homeView={state.homeView}
+            activeWorkoutSession={state.activeWorkoutSession}
             onBack={goBack}
+            onAddActiveSet={handleAddActiveSet}
+            onRemoveActiveSet={handleRemoveActiveSet}
+            onActiveSetChange={handleActiveSetChange}
+            onOpenExerciseReplacement={openExerciseReplacement}
+            onActivePreviousExercise={handleActivePreviousExercise}
+            onActiveNextExercise={handleActiveNextExercise}
+            onFinishActiveWorkout={handleFinishActiveWorkout}
             onOpenWorkoutPreparation={openWorkoutPreparation}
             onOpenTemplateSelector={openTemplateSelector}
-            onStartWorkout={startWorkoutPlaceholder}
+            onStartWorkout={handleStartWorkout}
+            onContinueWorkout={handleContinueWorkout}
             onOpenFullWorkout={openFullWorkoutPlaceholder}
           />
         </div>
@@ -1084,11 +1539,18 @@ function App() {
   }, [
     addDraftExercise,
     goBack,
+    handleActiveNextExercise,
+    handleActivePreviousExercise,
+    handleActiveSetChange,
+    handleAddActiveSet,
+    handleRemoveActiveSet,
     handleClearWorkouts,
     handleDeleteExercise,
     handleDeleteTemplate,
     handleExerciseNameChange,
     handleExportData,
+    handleFinishActiveWorkout,
+    handleContinueWorkout,
     handleImportData,
     handleSaveExercise,
     handleSaveTemplate,
@@ -1098,6 +1560,7 @@ function App() {
     openExerciseCreate,
     openExerciseEdit,
     openExerciseGroup,
+    openExerciseReplacement,
     openFullWorkoutPlaceholder,
     openTemplateCreate,
     openTemplateEdit,
@@ -1105,8 +1568,9 @@ function App() {
     openTemplateSelector,
     openWorkoutPreparation,
     removeDraftExercise,
-    startWorkoutPlaceholder,
+    handleStartWorkout,
     state.activeTab,
+    state.activeWorkoutSession,
     state.data,
     state.error,
     state.exerciseDraft,
@@ -1138,6 +1602,14 @@ function App() {
         selector={state.templateSelector}
         onClose={closeTemplateSelector}
         onSelect={selectWorkoutTemplate}
+      />
+
+      <ActiveExerciseReplacementSheet
+        data={state.data}
+        selector={state.activeExerciseReplacement}
+        session={getActiveWorkoutSessionFromState(state)}
+        onClose={closeExerciseReplacement}
+        onSelect={selectReplacementExercise}
       />
     </div>
   );
@@ -1225,20 +1697,52 @@ function Notice({ notice }) {
 function HomeView({
   data,
   homeView,
+  activeWorkoutSession,
   onBack,
+  onAddActiveSet,
+  onRemoveActiveSet,
+  onActiveSetChange,
+  onOpenExerciseReplacement,
+  onActivePreviousExercise,
+  onActiveNextExercise,
+  onFinishActiveWorkout,
   onOpenWorkoutPreparation,
   onOpenTemplateSelector,
   onStartWorkout,
+  onContinueWorkout,
   onOpenFullWorkout,
 }) {
+  if (homeView.name === "activeWorkout") {
+    const session =
+      activeWorkoutSession?.id === homeView.sessionId
+        ? activeWorkoutSession
+        : data.activeWorkoutSessions?.find((item) => item.id === homeView.sessionId) ?? null;
+
+    return (
+      <ActiveWorkoutScreen
+        session={session}
+        onBack={onBack}
+        onAddSet={onAddActiveSet}
+        onRemoveSet={onRemoveActiveSet}
+        onSetChange={onActiveSetChange}
+        onOpenReplacement={onOpenExerciseReplacement}
+        onPreviousExercise={onActivePreviousExercise}
+        onNextExercise={onActiveNextExercise}
+        onFinish={onFinishActiveWorkout}
+      />
+    );
+  }
+
   if (homeView.name === "preparation") {
     return (
       <WorkoutPreparationScreen
         data={data}
+        activeWorkoutSession={activeWorkoutSession}
         workoutGroupId={homeView.workoutGroupId}
         onBack={onBack}
         onOpenTemplateSelector={onOpenTemplateSelector}
         onStartWorkout={onStartWorkout}
+        onContinueWorkout={onContinueWorkout}
         onOpenFullWorkout={onOpenFullWorkout}
       />
     );
@@ -1325,13 +1829,19 @@ function WorkoutCard({ card, illustrationIndex, imageSrc, onOpen }) {
 
 function WorkoutPreparationScreen({
   data,
+  activeWorkoutSession,
   workoutGroupId,
   onBack,
   onOpenTemplateSelector,
   onStartWorkout,
+  onContinueWorkout,
   onOpenFullWorkout,
 }) {
   const details = buildWorkoutPreparationData(data, workoutGroupId);
+  const unfinishedSession = getActiveWorkoutSessionForGroup(
+    { data, activeWorkoutSession },
+    workoutGroupId,
+  );
 
   if (!details.workoutGroup) {
     return (
@@ -1375,9 +1885,20 @@ function WorkoutPreparationScreen({
         </div>
       </section>
 
-      <button className="action-button" type="button" onClick={onStartWorkout}>
-        <span>Начать тренировку</span>
-      </button>
+      <div className="prep-workout-actions">
+        <button
+          className={`action-button${unfinishedSession ? " secondary-action" : ""}`}
+          type="button"
+          onClick={() => onStartWorkout(details.workoutGroup.id)}
+        >
+          <span>{unfinishedSession ? "Новая тренировка" : "Начать тренировку"}</span>
+        </button>
+        {unfinishedSession ? (
+          <button className="action-button" type="button" onClick={() => onContinueWorkout(unfinishedSession.id)}>
+            <span>Продолжить тренировку</span>
+          </button>
+        ) : null}
+      </div>
 
       <section className="panel plan-section">
         <div className="section-title">
@@ -1413,6 +1934,127 @@ function WorkoutPreparationScreen({
   );
 }
 
+function ActiveWorkoutScreen({
+  session,
+  onBack,
+  onAddSet,
+  onRemoveSet,
+  onSetChange,
+  onOpenReplacement,
+  onPreviousExercise,
+  onNextExercise,
+  onFinish,
+}) {
+  if (!session || !session.exerciseLogs?.length) {
+    return (
+      <section className="screen active-workout-screen">
+        <ScreenBackButton onBack={onBack} />
+        <div className="empty-state error-state">
+          <h1>Активная тренировка не найдена</h1>
+          <p>Вернись на главную и начни тренировку ещё раз.</p>
+        </div>
+      </section>
+    );
+  }
+
+  const currentIndex = Math.min(
+    Math.max(Number(session.currentExerciseIndex ?? 0), 0),
+    session.exerciseLogs.length - 1,
+  );
+  const exerciseLog = session.exerciseLogs[currentIndex];
+  const groupExercises = session.exerciseLogs.filter(
+    (item) => item.muscleGroupId === exerciseLog.muscleGroupId,
+  );
+  const groupExerciseIndex = groupExercises.findIndex((item) => item === exerciseLog);
+  const exerciseProgressLabel = `${exerciseLog.muscleGroupNameSnapshot} упражнение ${groupExerciseIndex + 1} из ${groupExercises.length}`;
+  const isFirstExercise = currentIndex <= 0;
+  const isLastExercise = currentIndex >= session.exerciseLogs.length - 1;
+  const sets = exerciseLog.sets?.length ? exerciseLog.sets : [{ setNumber: 1, weightKg: "", reps: "" }];
+  const canRemoveSet = sets.length > 1;
+
+  return (
+    <section className="screen active-workout-screen">
+      <ScreenBackButton onBack={onBack} />
+      <header className="screen-header active-workout-header">
+        <h1>{exerciseProgressLabel}</h1>
+        <p className="active-exercise-title">
+          Упражнение {exerciseLog.exerciseNameSnapshot}
+        </p>
+        <button
+          className="action-button secondary-action active-replace-button"
+          type="button"
+          onClick={() => onOpenReplacement(currentIndex)}
+        >
+          <span>Заменить упражнение</span>
+        </button>
+      </header>
+
+      <section className="panel active-exercise-panel">
+        <p className="active-previous-sets">
+          <span>Прошлый раз:</span> <strong>{formatSetList(exerciseLog.previousSets)}</strong>
+        </p>
+      </section>
+
+      <section className="panel plan-section active-sets-panel">
+        <div className="active-set-list">
+          {sets.map((set, index) => (
+            <div key={index} className="active-set-row">
+              <span className="active-set-number">{index + 1}</span>
+              <label className="active-set-input">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={set.weightKg ?? ""}
+                  placeholder="0"
+                  aria-label={`Вес в подходе ${index + 1}`}
+                  onChange={(event) => onSetChange(currentIndex, index, "weightKg", event.target.value)}
+                />
+                <span>кг</span>
+              </label>
+              <label className="active-set-input">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={set.reps ?? ""}
+                  placeholder="0"
+                  aria-label={`Повторы в подходе ${index + 1}`}
+                  onChange={(event) => onSetChange(currentIndex, index, "reps", event.target.value)}
+                />
+                <span>повт.</span>
+              </label>
+              <button
+                className="active-set-remove-button"
+                type="button"
+                disabled={!canRemoveSet}
+                aria-label={`Удалить подход ${index + 1}`}
+                onClick={() => onRemoveSet(currentIndex, index)}
+              />
+            </div>
+          ))}
+        </div>
+
+        <button className="action-button secondary-action active-add-set-button" type="button" onClick={() => onAddSet(currentIndex)}>
+          <span>Добавить подход</span>
+        </button>
+      </section>
+
+      <div className="active-navigation-actions">
+        <button className="action-button active-next-button" type="button" onClick={isLastExercise ? onFinish : onNextExercise}>
+          <span>{isLastExercise ? "Завершить тренировку" : "Следующее упражнение"}</span>
+        </button>
+        <button
+          className="action-button secondary-action"
+          type="button"
+          disabled={isFirstExercise}
+          onClick={onPreviousExercise}
+        >
+          <span>Предыдущее упражнение</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function PreviousWorkoutBlock({ workout, onOpenFullWorkout }) {
   if (!workout) {
     return (
@@ -1421,7 +2063,7 @@ function PreviousWorkoutBlock({ workout, onOpenFullWorkout }) {
           <span>Прошлая тренировка</span>
         </div>
         <div className="empty-state compact-empty-state">
-          <h2>Прошлых тренировок ещё нет</h2>
+          <h2>Прошлых тренировок нет</h2>
         </div>
       </section>
     );
@@ -1434,7 +2076,6 @@ function PreviousWorkoutBlock({ workout, onOpenFullWorkout }) {
       </div>
       <div className="previous-workout-card">
         <strong className="previous-workout-date">{formatDate(workout.date)}</strong>
-        <span className="previous-workout-label">Шаблоны</span>
         <div className="previous-workout-list">
           {workout.sections.map((muscleLog) => (
             <div key={muscleLog.muscleGroup.id} className="previous-workout-group">
@@ -2025,6 +2666,81 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
           ) : (
             <div className="empty-state compact-empty-state">
               <h2>Шаблонов ещё нет</h2>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSelect }) {
+  if (!data || !selector || !session) {
+    return null;
+  }
+
+  const exerciseLog = session.exerciseLogs?.[selector.exerciseIndex];
+
+  if (!exerciseLog) {
+    return null;
+  }
+
+  const templateSnapshot = session.templateSnapshots?.find(
+    (template) => template.muscleGroupId === exerciseLog.muscleGroupId,
+  );
+  const plannedExerciseIds = new Set(templateSnapshot?.exerciseIds ?? []);
+  const plannedExerciseId = exerciseLog.plannedExerciseId ?? exerciseLog.exerciseId;
+  const usedExerciseIds = new Set(
+    session.exerciseLogs
+      .filter((_, currentExerciseIndex) => currentExerciseIndex !== selector.exerciseIndex)
+      .map((item) => item.exerciseId)
+      .filter(Boolean),
+  );
+  const exercises = data.exercises
+    .filter((exercise) => exercise.muscleGroupId === exerciseLog.muscleGroupId && !exercise.isArchived)
+    .map((exercise) => ({
+      ...exercise,
+      isCurrent: exercise.id === exerciseLog.exerciseId,
+      isInPlan: plannedExerciseIds.has(exercise.id),
+      isPlannedForCurrentSlot: exercise.id === plannedExerciseId,
+      isUsedInWorkout: usedExerciseIds.has(exercise.id),
+    }));
+
+  return (
+    <div className="template-select-layer" role="presentation">
+      <button className="template-select-backdrop" type="button" aria-label="Закрыть выбор упражнения" onClick={onClose} />
+      <section className="template-select-sheet" role="dialog" aria-modal="true" aria-label="Замена упражнения">
+        <div className="template-select-handle" aria-hidden="true" />
+        <div className="template-select-list">
+          {exercises.length ? (
+            exercises.map((exercise) => {
+              const isDisabled = exercise.isCurrent || exercise.isUsedInWorkout;
+              const status = exercise.isCurrent
+                ? "Текущее"
+                : exercise.isUsedInWorkout
+                  ? exercise.isInPlan
+                    ? "В плане"
+                    : "Уже выбрано"
+                  : exercise.isInPlan
+                    ? "По плану"
+                    : null;
+
+              return (
+                <button
+                  key={exercise.id}
+                  className={`template-select-option${exercise.isCurrent ? " is-selected" : ""}`}
+                  type="button"
+                  disabled={isDisabled}
+                  onClick={() => onSelect(exercise.id)}
+                >
+                  <span>{exercise.name}</span>
+                  {status ? <span className="template-select-check">{status}</span> : null}
+                </button>
+              );
+            })
+          ) : (
+            <div className="empty-state compact-empty-state">
+              <h2>В базе нет упражнений</h2>
             </div>
           )}
         </div>

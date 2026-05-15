@@ -103,6 +103,12 @@ function collectExerciseLogEntries(value) {
 }
 
 function getLastSetForExercise(data, exerciseId) {
+  const lastSets = getLastSetsForExercise(data, exerciseId);
+
+  return lastSets[lastSets.length - 1] ?? null;
+}
+
+export function getLastSetsForExercise(data, exerciseId) {
   const logsByDate = data.workoutLogs
     .map((log) => ({
       log,
@@ -123,17 +129,17 @@ function getLastSetForExercise(data, exerciseId) {
         set.reps !== undefined &&
         set.reps !== null,
     );
-    const lastSet = sets?.[sets.length - 1];
 
-    if (lastSet) {
-      return {
-        weightKg: lastSet.weightKg,
-        reps: lastSet.reps,
-      };
+    if (sets?.length) {
+      return sets.map((set, index) => ({
+        setNumber: index + 1,
+        weightKg: set.weightKg,
+        reps: set.reps,
+      }));
     }
   }
 
-  return null;
+  return [];
 }
 
 function getTemplateSnapshots(log) {
@@ -217,6 +223,105 @@ function buildTemplateExerciseItems(data, template, exercisesById) {
       lastSet: getLastSetForExercise(data, exerciseId),
     };
   });
+}
+
+function createInitialActiveSetRows(previousSets) {
+  const sourceSets = previousSets.length
+    ? previousSets
+    : Array.from({ length: 4 }, (_, index) => ({ setNumber: index + 1, weightKg: "", reps: "" }));
+
+  return sourceSets.map((set, index) => ({
+    setNumber: index + 1,
+    weightKg: set.weightKg === undefined || set.weightKg === null ? "" : String(set.weightKg),
+    reps: set.reps === undefined || set.reps === null ? "" : String(set.reps),
+  }));
+}
+
+export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, startedAt) {
+  const workoutGroup = data.workoutGroups.find((item) => item.id === workoutGroupId) ?? null;
+
+  if (!workoutGroup) {
+    return null;
+  }
+
+  const muscleGroupsById = indexById(data.muscleGroups);
+  const exercisesById = indexById(data.exercises);
+  const muscleGroupSnapshots = [];
+  const templateSnapshots = [];
+  const exerciseLogs = [];
+
+  for (const muscleGroupId of workoutGroup.muscleGroupIds) {
+    const muscleGroup = muscleGroupsById.get(muscleGroupId);
+
+    if (!muscleGroup) {
+      continue;
+    }
+
+    const template = getSelectedTemplateForMuscleGroup(data, workoutGroup, muscleGroupId);
+    const templateExerciseSnapshots = (template?.exerciseIds ?? []).map((exerciseId) => {
+      const exercise = exercisesById.get(exerciseId);
+
+      return {
+        id: exerciseId,
+        name: exercise && !exercise.isArchived ? exercise.name : "Упражнение не найдено",
+        muscleGroupId,
+        muscleGroupNameSnapshot: muscleGroup.name,
+        trackingType: exercise?.trackingType ?? "weight_reps",
+        isMissing: !exercise || Boolean(exercise.isArchived),
+      };
+    });
+
+    muscleGroupSnapshots.push({
+      id: muscleGroup.id,
+      name: muscleGroup.name,
+      sortOrder: muscleGroup.sortOrder,
+    });
+
+    templateSnapshots.push({
+      id: template?.id ?? null,
+      name: template?.name ?? "Шаблон не найден",
+      muscleGroupId,
+      muscleGroupNameSnapshot: muscleGroup.name,
+      exerciseIds: templateExerciseSnapshots.map((exercise) => exercise.id),
+      exercises: templateExerciseSnapshots,
+    });
+
+    for (const exercise of templateExerciseSnapshots) {
+      const previousSets = exercise.isMissing ? [] : getLastSetsForExercise(data, exercise.id);
+
+      exerciseLogs.push({
+        exerciseId: exercise.id,
+        exerciseNameSnapshot: exercise.name,
+        plannedExerciseId: exercise.id,
+        plannedExerciseNameSnapshot: exercise.name,
+        muscleGroupId,
+        muscleGroupNameSnapshot: muscleGroup.name,
+        templateId: template?.id ?? null,
+        templateNameSnapshot: template?.name ?? "Шаблон не найден",
+        trackingType: exercise.trackingType,
+        previousSets,
+        replacement: null,
+        sets: createInitialActiveSetRows(previousSets),
+      });
+    }
+  }
+
+  return {
+    id: sessionId,
+    status: "active",
+    workoutGroupId: workoutGroup.id,
+    startedAt,
+    updatedAt: startedAt,
+    currentExerciseIndex: 0,
+    workoutGroupSnapshot: {
+      id: workoutGroup.id,
+      name: workoutGroup.name,
+      muscleGroupIds: [...workoutGroup.muscleGroupIds],
+    },
+    muscleGroupSnapshots,
+    templateSnapshots,
+    exerciseLogs,
+  };
 }
 
 export function buildWorkoutGroupCards(data) {
