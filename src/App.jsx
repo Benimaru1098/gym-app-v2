@@ -101,12 +101,64 @@ function normalizePlanView(view) {
 }
 
 function createHistoryEntry(state) {
-  return {
+  const entry = {
     tag: HISTORY_TAG,
     activeTab: state.activeTab,
-    homeView: normalizeHomeView(state.homeView),
-    planView: normalizePlanView(state.planView),
   };
+
+  if (state.activeTab === "home") {
+    entry.homeView = normalizeHomeView(state.homeView);
+  }
+
+  if (state.activeTab === "plan") {
+    entry.planView = normalizePlanView(state.planView);
+  }
+
+  return entry;
+}
+
+function applyHistoryEntry(current, entry) {
+  const activeTab = entry.activeTab || "home";
+  const next = {
+    ...current,
+    activeTab,
+    activeExerciseReplacement: null,
+    templateSelector: null,
+  };
+
+  if (activeTab === "home") {
+    next.homeView = normalizeHomeView(entry.homeView);
+  }
+
+  if (activeTab === "plan") {
+    next.planView = normalizePlanView(entry.planView);
+  }
+
+  return next;
+}
+
+function getPlanBackTarget(planView) {
+  const normalized = normalizePlanView(planView);
+
+  switch (normalized.name) {
+    case "templates":
+    case "exercises":
+      return { activeTab: "plan", planView: { name: "overview" } };
+    case "createTemplate":
+    case "editTemplate":
+      return {
+        activeTab: "plan",
+        planView: { name: "templates", muscleGroupId: normalized.muscleGroupId },
+      };
+    case "createExercise":
+    case "editExercise":
+      return {
+        activeTab: "plan",
+        planView: { name: "exercises", muscleGroupId: normalized.muscleGroupId },
+      };
+    default:
+      return null;
+  }
 }
 
 function pluralRu(value, one, few, many) {
@@ -428,10 +480,12 @@ function App() {
   }, [state]);
 
   const patchState = useCallback((patchOrUpdater) => {
-    setState((current) => {
-      const patch = typeof patchOrUpdater === "function" ? patchOrUpdater(current) : patchOrUpdater;
-      return { ...current, ...patch };
-    });
+    const current = stateRef.current;
+    const patch = typeof patchOrUpdater === "function" ? patchOrUpdater(current) : patchOrUpdater;
+    const next = { ...current, ...patch };
+
+    stateRef.current = next;
+    setState(next);
   }, []);
 
   const showNotice = useCallback(
@@ -466,16 +520,14 @@ function App() {
   }, []);
 
   const restoreScrollPosition = useCallback((planView) => {
-    requestAnimationFrame(() => {
-      const viewElement = getViewElement();
-      if (!viewElement) {
-        return;
-      }
+    const viewElement = getViewElement();
+    if (!viewElement) {
+      return;
+    }
 
-      const key = getPlanScrollKey(planView);
-      const savedTop = scrollPositionsRef.current.get(key);
-      viewElement.scrollTo({ top: Number.isFinite(savedTop) ? savedTop : 0 });
-    });
+    const key = getPlanScrollKey(planView);
+    const savedTop = scrollPositionsRef.current.get(key);
+    viewElement.scrollTop = Number.isFinite(savedTop) ? savedTop : 0;
   }, []);
 
   const writeHistoryState = useCallback((method = "push") => {
@@ -502,6 +554,7 @@ function App() {
         saveCurrentScrollPosition();
       }
 
+      stateRef.current = next;
       setState(next);
 
       requestAnimationFrame(() => {
@@ -526,27 +579,41 @@ function App() {
 
   const goBack = useCallback(() => {
     const current = stateRef.current;
+
     if (current.activeTab === "home" && current.homeView.name === "activeWorkout") {
       const session = getActiveWorkoutSessionFromState(current);
       navigate(
-        { homeView: { name: "preparation", workoutGroupId: session?.workoutGroupId ?? current.homeView.workoutGroupId } },
-        { history: "replace" },
+        {
+          activeTab: "home",
+          homeView: {
+            name: "preparation",
+            workoutGroupId: session?.workoutGroupId ?? current.homeView.workoutGroupId,
+          },
+        },
+        { history: "replace", scroll: "top" },
       );
       return;
     }
 
     if (current.activeTab === "home" && current.homeView.name !== "overview") {
-      navigate({ homeView: { name: "overview" } }, { history: "replace" });
+      navigate(
+        { activeTab: "home", homeView: { name: "overview" } },
+        { history: "replace", scroll: "top" },
+      );
       return;
+    }
+
+    if (current.activeTab === "plan") {
+      const target = getPlanBackTarget(current.planView);
+
+      if (target) {
+        navigate(target, { history: "replace", scroll: "restore" });
+        return;
+      }
     }
 
     if (window.history.state?.tag === HISTORY_TAG) {
       window.history.back();
-      return;
-    }
-
-    if (current.activeTab === "plan" && current.planView.name !== "overview") {
-      navigate({ planView: { name: "overview" } }, { history: "replace" });
     }
   }, [navigate]);
 
@@ -567,17 +634,12 @@ function App() {
         return;
       }
 
-      setState((current) => ({
-        ...current,
-        activeTab: entry.activeTab || "home",
-        homeView: normalizeHomeView(entry.homeView),
-        planView: normalizePlanView(entry.planView),
-        activeExerciseReplacement: null,
-        templateSelector: null,
-      }));
+      const next = applyHistoryEntry(stateRef.current, entry);
+      stateRef.current = next;
+      setState(next);
 
-      if (entry.activeTab === "plan") {
-        restoreScrollPosition(entry.planView);
+      if (next.activeTab === "plan") {
+        requestAnimationFrame(() => restoreScrollPosition(next.planView));
       } else {
         requestAnimationFrame(() => getViewElement()?.scrollTo({ top: 0 }));
       }
@@ -738,7 +800,13 @@ function App() {
         nextPatch.activeExerciseReplacement = null;
       }
 
-      const hasOpenNestedView = current.homeView.name !== "overview" || current.planView.name !== "overview";
+      const hasOpenNestedView =
+        current.activeTab === "home"
+          ? current.homeView.name !== "overview"
+          : current.activeTab === "plan"
+            ? current.planView.name !== "overview"
+            : false;
+
       navigate(nextPatch, { history: hasOpenNestedView ? "replace" : "push", scroll: "top" });
     },
     [navigate],
