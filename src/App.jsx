@@ -1,3 +1,4 @@
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearWorkoutLogs,
@@ -20,14 +21,16 @@ import {
   buildExerciseEditingData,
   buildExerciseSummariesByMuscleGroup,
   buildExercisesForMuscleGroup,
+  buildJournalEntries,
+  buildJournalWorkoutDetails,
   buildTemplateCreationData,
   buildTemplateEditingData,
   buildTemplateSummariesByMuscleGroup,
   buildTemplatesForMuscleGroup,
   buildWorkoutGroupCards,
   buildWorkoutPreparationData,
-  getCycleProgress,
   getLastSetsForExercise,
+  getSelectedTemplateIdForMuscleGroup,
 } from "./domain/selectors.js";
 import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
 import { icon } from "./ui/icons.js";
@@ -47,6 +50,44 @@ const WORKOUT_IMAGES = [gym1Src, gym2Src, gym3Src];
 const HISTORY_TAG = "gym-app-react";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
 const TEMPLATE_DRAG_MAX_SCROLL_STEP = 18;
+const TEMPLATE_DRAG_REORDER_ANIMATION_MS = 150;
+
+const screenMotionVariants = {
+  initial: (mode) => {
+    if (mode === "secondary-open") {
+      return { opacity: 0, x: 34 };
+    }
+
+    if (mode === "secondary-close") {
+      return { opacity: 0, x: -34 };
+    }
+
+    return { opacity: 0, scale: 0.985, x: 0, y: 12 };
+  },
+  animate: {
+    opacity: 1,
+    scale: 1,
+    x: 0,
+    y: 0,
+  },
+};
+
+const bottomSheetBackdropTransition = {
+  duration: 0.16,
+  ease: [0.22, 1, 0.36, 1],
+};
+
+const bottomSheetTransition = {
+  duration: 0.22,
+  ease: [0.22, 1, 0.36, 1],
+};
+
+const secondaryScreenTransition = {
+  duration: 0.24,
+  ease: [0.22, 1, 0.36, 1],
+};
+
+const TEMPLATE_EXERCISE_ANIMATION_MS = 170;
 
 function createInitialState() {
   return {
@@ -62,6 +103,7 @@ function createInitialState() {
     isStandalone:
       window.matchMedia?.("(display-mode: standalone)")?.matches ||
       window.navigator.standalone === true,
+    journalView: { name: "overview", workoutLogId: null },
     notice: null,
     planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
     templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
@@ -100,6 +142,14 @@ function normalizePlanView(view) {
   }
 }
 
+function normalizeJournalView(view) {
+  if (view?.name === "details") {
+    return { name: "details", workoutLogId: view.workoutLogId };
+  }
+
+  return { name: "overview", workoutLogId: null };
+}
+
 function createHistoryEntry(state) {
   const entry = {
     tag: HISTORY_TAG,
@@ -112,6 +162,10 @@ function createHistoryEntry(state) {
 
   if (state.activeTab === "plan") {
     entry.planView = normalizePlanView(state.planView);
+  }
+
+  if (state.activeTab === "journal") {
+    entry.journalView = normalizeJournalView(state.journalView);
   }
 
   return entry;
@@ -134,6 +188,10 @@ function applyHistoryEntry(current, entry) {
     next.planView = normalizePlanView(entry.planView);
   }
 
+  if (activeTab === "journal") {
+    next.journalView = normalizeJournalView(entry.journalView);
+  }
+
   return next;
 }
 
@@ -142,6 +200,7 @@ function createNextState(current, patch) {
     ...current,
     ...patch,
     homeView: patch.homeView ? normalizeHomeView(patch.homeView) : current.homeView,
+    journalView: patch.journalView ? normalizeJournalView(patch.journalView) : current.journalView,
     planView: patch.planView ? normalizePlanView(patch.planView) : current.planView,
   };
 }
@@ -189,6 +248,10 @@ function getLocalBackTarget(appState) {
 
   if (appState.activeTab === "plan") {
     return getPlanBackTarget(appState.planView);
+  }
+
+  if (appState.activeTab === "journal" && appState.journalView.name !== "overview") {
+    return { activeTab: "journal", journalView: { name: "overview" } };
   }
 
   return null;
@@ -283,6 +346,62 @@ function formatDate(dateValue) {
   return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
 }
 
+function formatJournalDate(dateValue) {
+  if (!dateValue) {
+    return "Дата не указана";
+  }
+
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return "Дата не указана";
+  }
+
+  const currentYear = new Date().getFullYear();
+  const options =
+    date.getFullYear() === currentYear
+      ? { day: "numeric", month: "long" }
+      : { day: "numeric", month: "long", year: "numeric" };
+
+  return new Intl.DateTimeFormat("ru-RU", options).format(date);
+}
+
+function getJournalDateParts(dateValue) {
+  const date = new Date(dateValue);
+
+  if (!dateValue || Number.isNaN(date.getTime())) {
+    return {
+      day: "—",
+      month: "",
+    };
+  }
+
+  const parts = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).formatToParts(date);
+
+  return {
+    day: parts.find((part) => part.type === "day")?.value ?? "",
+    month: parts.find((part) => part.type === "month")?.value ?? "",
+  };
+}
+
+function formatWorkoutSet(set) {
+  const hasWeight = set?.weightKg !== undefined && set.weightKg !== null && set.weightKg !== "";
+  const hasReps = set?.reps !== undefined && set.reps !== null && set.reps !== "";
+
+  if (hasWeight && hasReps) {
+    return `${formatWeightValue(set.weightKg)} кг × ${set.reps}`;
+  }
+
+  if (hasWeight) {
+    return `${formatWeightValue(set.weightKg)} кг`;
+  }
+
+  if (hasReps) {
+    return `${set.reps} повт.`;
+  }
+
+  return "не заполнено";
+}
+
 function formatSetList(sets) {
   const labels = (sets ?? [])
     .map((set) => {
@@ -374,15 +493,99 @@ function getViewElement() {
   return document.getElementById("view");
 }
 
-function getPlanScrollKey(planView) {
-  const normalized = normalizePlanView(planView);
-  return [
-    "plan",
-    normalized.name,
-    normalized.muscleGroupId || "",
-    normalized.templateId || "",
-    normalized.exerciseId || "",
-  ].join(":");
+function getViewScrollKey(appState) {
+  switch (appState.activeTab) {
+    case "home": {
+      const normalized = normalizeHomeView(appState.homeView);
+
+      return [
+        "home",
+        normalized.name,
+        normalized.workoutGroupId || "",
+        normalized.sessionId || "",
+      ].join(":");
+    }
+    case "plan": {
+      const normalized = normalizePlanView(appState.planView);
+
+      return [
+        "plan",
+        normalized.name,
+        normalized.muscleGroupId || "",
+        normalized.templateId || "",
+        normalized.exerciseId || "",
+      ].join(":");
+    }
+    case "journal": {
+      const normalized = normalizeJournalView(appState.journalView);
+
+      return [
+        "journal",
+        normalized.name,
+        normalized.workoutLogId || "",
+      ].join(":");
+    }
+    default:
+      return appState.activeTab || "home";
+  }
+}
+
+function getViewDepth(appState) {
+  switch (appState.activeTab) {
+    case "home": {
+      const normalized = normalizeHomeView(appState.homeView);
+
+      if (normalized.name === "activeWorkout") {
+        return 2;
+      }
+
+      return normalized.name === "overview" ? 0 : 1;
+    }
+    case "plan": {
+      const normalized = normalizePlanView(appState.planView);
+
+      if (
+        normalized.name === "createTemplate" ||
+        normalized.name === "editTemplate" ||
+        normalized.name === "createExercise" ||
+        normalized.name === "editExercise"
+      ) {
+        return 2;
+      }
+
+      return normalized.name === "overview" ? 0 : 1;
+    }
+    case "journal": {
+      const normalized = normalizeJournalView(appState.journalView);
+
+      return normalized.name === "overview" ? 0 : 1;
+    }
+    default:
+      return 0;
+  }
+}
+
+function getScreenAnimationMode(current, next) {
+  if (!current || !next || current.activeTab !== next.activeTab) {
+    return "main";
+  }
+
+  const currentDepth = getViewDepth(current);
+  const nextDepth = getViewDepth(next);
+
+  if (nextDepth > currentDepth) {
+    return "secondary-open";
+  }
+
+  if (nextDepth < currentDepth) {
+    return "secondary-close";
+  }
+
+  if (nextDepth > 0 && getViewScrollKey(current) !== getViewScrollKey(next)) {
+    return "secondary-open";
+  }
+
+  return "main";
 }
 
 function SvgIcon({ name }) {
@@ -407,9 +610,83 @@ function createTemplateDragPlaceholder(itemRect) {
   return placeholder;
 }
 
+function getFixedContainingBlockOffset(element) {
+  let node = element.parentElement;
+
+  while (node && node !== document.body) {
+    const style = window.getComputedStyle(node);
+    const willChange = style.willChange || "";
+    const createsFixedContainingBlock =
+      style.transform !== "none" ||
+      style.perspective !== "none" ||
+      style.filter !== "none" ||
+      willChange.includes("transform") ||
+      willChange.includes("perspective") ||
+      willChange.includes("filter");
+
+    if (createsFixedContainingBlock) {
+      const rect = node.getBoundingClientRect();
+
+      return {
+        left: rect.left,
+        top: rect.top,
+      };
+    }
+
+    node = node.parentElement;
+  }
+
+  return {
+    left: 0,
+    top: 0,
+  };
+}
+
 function positionTemplateDragItem(drag, clientX, clientY) {
-  drag.item.style.left = `${clientX - drag.offsetX}px`;
-  drag.item.style.top = `${clientY - drag.offsetY}px`;
+  drag.item.style.left = `${clientX - drag.offsetX - drag.fixedOriginLeft}px`;
+  drag.item.style.top = `${clientY - drag.offsetY - drag.fixedOriginTop}px`;
+}
+
+function getTemplateDragAnimatedItems(list) {
+  return Array.from(list.querySelectorAll("[data-selected-exercise-item]:not(.is-dragging)"));
+}
+
+function captureTemplateDragRects(list) {
+  return new Map(
+    getTemplateDragAnimatedItems(list).map((item) => [item, item.getBoundingClientRect()]),
+  );
+}
+
+function animateTemplateDragReorder(list, previousRects) {
+  getTemplateDragAnimatedItems(list).forEach((item) => {
+    const previousRect = previousRects.get(item);
+    if (!previousRect) {
+      return;
+    }
+
+    const nextRect = item.getBoundingClientRect();
+    const deltaX = previousRect.left - nextRect.left;
+    const deltaY = previousRect.top - nextRect.top;
+
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) {
+      return;
+    }
+
+    window.clearTimeout(item.templateDragAnimationTimer);
+    item.style.transition = "none";
+    item.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+    requestAnimationFrame(() => {
+      item.style.transition = `transform ${TEMPLATE_DRAG_REORDER_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+      item.style.transform = "";
+    });
+
+    item.templateDragAnimationTimer = window.setTimeout(() => {
+      item.style.transition = "";
+      item.style.transform = "";
+      delete item.templateDragAnimationTimer;
+    }, TEMPLATE_DRAG_REORDER_ANIMATION_MS + 40);
+  });
 }
 
 function moveTemplateDragPlaceholder(drag, clientY) {
@@ -418,6 +695,15 @@ function moveTemplateDragPlaceholder(drag, clientY) {
     const rect = item.getBoundingClientRect();
     return clientY < rect.top + rect.height / 2;
   });
+  const isAlreadyPlaced = nextItem
+    ? drag.placeholder.nextElementSibling === nextItem
+    : drag.placeholder === drag.list.lastElementChild;
+
+  if (isAlreadyPlaced) {
+    return;
+  }
+
+  const previousRects = captureTemplateDragRects(drag.list);
 
   if (nextItem) {
     drag.list.insertBefore(drag.placeholder, nextItem);
@@ -425,6 +711,7 @@ function moveTemplateDragPlaceholder(drag, clientY) {
     drag.list.appendChild(drag.placeholder);
   }
 
+  animateTemplateDragReorder(drag.list, previousRects);
   updateSelectedExerciseNumbers(drag.list);
 }
 
@@ -507,6 +794,8 @@ function App() {
   const scrollPositionsRef = useRef(new Map());
   const templateDragRef = useRef(null);
   const activeWorkoutSaveQueueRef = useRef(Promise.resolve());
+  const screenAnimationModeRef = useRef("main");
+  const shouldReduceMotion = useReducedMotion();
 
   useEffect(() => {
     stateRef.current = state;
@@ -539,26 +828,21 @@ function App() {
   }, [patchState]);
 
   const saveCurrentScrollPosition = useCallback(() => {
-    const current = stateRef.current;
-    if (current.activeTab !== "plan") {
-      return;
-    }
-
     const viewElement = getViewElement();
     if (!viewElement) {
       return;
     }
 
-    scrollPositionsRef.current.set(getPlanScrollKey(current.planView), viewElement.scrollTop);
+    scrollPositionsRef.current.set(getViewScrollKey(stateRef.current), viewElement.scrollTop);
   }, []);
 
-  const restoreScrollPosition = useCallback((planView) => {
+  const restoreScrollPosition = useCallback((appState) => {
     const viewElement = getViewElement();
     if (!viewElement) {
       return;
     }
 
-    const key = getPlanScrollKey(planView);
+    const key = getViewScrollKey(appState);
     const savedTop = scrollPositionsRef.current.get(key);
     viewElement.scrollTop = Number.isFinite(savedTop) ? savedTop : 0;
   }, []);
@@ -578,16 +862,15 @@ function App() {
       const current = stateRef.current;
       const next = createNextState(current, patch);
 
-      if (current.activeTab === "plan" && history === "push") {
-        saveCurrentScrollPosition();
-      }
+      saveCurrentScrollPosition();
+      screenAnimationModeRef.current = getScreenAnimationMode(current, next);
 
       stateRef.current = next;
       setState(next);
 
       requestAnimationFrame(() => {
-        if (scroll === "restore" && next.activeTab === "plan") {
-          restoreScrollPosition(next.planView);
+        if (scroll === "restore") {
+          restoreScrollPosition(next);
           return;
         }
 
@@ -612,7 +895,7 @@ function App() {
     if (target) {
       navigate(target, {
         history: "replace",
-        scroll: target.activeTab === "plan" ? "restore" : "top",
+        scroll: "restore",
       });
       return;
     }
@@ -639,37 +922,35 @@ function App() {
         return;
       }
 
+      saveCurrentScrollPosition();
+
       const target = getLocalBackTarget(stateRef.current);
 
       if (target) {
-        const next = createNextState(stateRef.current, target);
+        const current = stateRef.current;
+        const next = createNextState(current, target);
+        screenAnimationModeRef.current = getScreenAnimationMode(current, next);
         stateRef.current = next;
         setState(next);
         window.history.replaceState(createHistoryEntry(next), "");
 
-        if (next.activeTab === "plan") {
-          requestAnimationFrame(() => restoreScrollPosition(next.planView));
-        } else {
-          requestAnimationFrame(() => getViewElement()?.scrollTo({ top: 0 }));
-        }
+        requestAnimationFrame(() => restoreScrollPosition(next));
 
         return;
       }
 
-      const next = applyHistoryEntry(stateRef.current, entry);
+      const current = stateRef.current;
+      const next = applyHistoryEntry(current, entry);
+      screenAnimationModeRef.current = getScreenAnimationMode(current, next);
       stateRef.current = next;
       setState(next);
 
-      if (next.activeTab === "plan") {
-        requestAnimationFrame(() => restoreScrollPosition(next.planView));
-      } else {
-        requestAnimationFrame(() => getViewElement()?.scrollTo({ top: 0 }));
-      }
+      requestAnimationFrame(() => restoreScrollPosition(next));
     };
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [restoreScrollPosition, writeHistoryState]);
+  }, [restoreScrollPosition, saveCurrentScrollPosition, writeHistoryState]);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event) => {
@@ -827,9 +1108,11 @@ function App() {
           ? current.homeView.name !== "overview"
           : current.activeTab === "plan"
             ? current.planView.name !== "overview"
-            : false;
+            : current.activeTab === "journal"
+              ? current.journalView.name !== "overview"
+              : false;
 
-      navigate(nextPatch, { history: hasOpenNestedView ? "replace" : "push", scroll: "top" });
+      navigate(nextPatch, { history: hasOpenNestedView ? "replace" : "push", scroll: "restore" });
     },
     [navigate],
   );
@@ -1291,9 +1574,12 @@ function App() {
     }
   }, [navigate, refreshData, showNotice]);
 
-  const openFullWorkoutPlaceholder = useCallback(() => {
-    showNotice("Полная запись появится в журнале позже");
-  }, [showNotice]);
+  const openJournalWorkout = useCallback(
+    (workoutLogId) => {
+      navigate({ activeTab: "journal", journalView: { name: "details", workoutLogId } });
+    },
+    [navigate],
+  );
 
   const handleTemplateNameChange = useCallback((event) => {
     const value = event.target.value;
@@ -1345,6 +1631,7 @@ function App() {
     event.preventDefault();
     handle.setPointerCapture?.(event.pointerId);
     const rect = item.getBoundingClientRect();
+    const fixedOffset = getFixedContainingBlockOffset(item);
     const placeholder = createTemplateDragPlaceholder(rect);
     list.insertBefore(placeholder, item);
     item.classList.add("is-dragging");
@@ -1360,6 +1647,8 @@ function App() {
 
     const drag = {
       autoScrollFrame: null,
+      fixedOriginLeft: fixedOffset.left,
+      fixedOriginTop: fixedOffset.top,
       handle,
       item,
       lastClientY: event.clientY,
@@ -1557,21 +1846,36 @@ function App() {
   }, [refreshData, showNotice]);
 
   const activeView = useMemo(() => {
+    const screenAnimationMode = screenAnimationModeRef.current;
+    const isSecondaryMotion =
+      screenAnimationMode === "secondary-open" || screenAnimationMode === "secondary-close";
+    const screenTransition = shouldReduceMotion
+      ? { duration: 0 }
+      : isSecondaryMotion
+        ? secondaryScreenTransition
+        : {
+            damping: 32,
+            mass: 0.78,
+            stiffness: 360,
+            type: "spring",
+          };
+    const screenInitial = shouldReduceMotion ? false : "initial";
+    let screenKey = "loading";
+    let screenContent = null;
+
     if (state.isLoading) {
-      return <LoadingScreen />;
-    }
+      screenContent = <LoadingScreen />;
+    } else if (state.error) {
+      screenKey = "error";
+      screenContent = <ErrorScreen message={state.error} />;
+    } else if (!state.data) {
+      screenKey = "missing-data";
+      screenContent = <ErrorScreen message="Данные не найдены" />;
+    } else {
+      screenKey = getViewScrollKey(state);
 
-    if (state.error) {
-      return <ErrorScreen message={state.error} />;
-    }
-
-    if (!state.data) {
-      return <ErrorScreen message="Данные не найдены" />;
-    }
-
-    return (
-      <>
-        <div className="tab-view" hidden={state.activeTab !== "home"}>
+      if (state.activeTab === "home") {
+        screenContent = (
           <HomeView
             data={state.data}
             homeView={state.homeView}
@@ -1588,43 +1892,62 @@ function App() {
             onOpenTemplateSelector={openTemplateSelector}
             onStartWorkout={handleStartWorkout}
             onContinueWorkout={handleContinueWorkout}
-            onOpenFullWorkout={openFullWorkoutPlaceholder}
+            onOpenFullWorkout={openJournalWorkout}
           />
-        </div>
+        );
+      } else if (state.activeTab === "plan") {
+        screenContent = (
+          <PlanView
+            data={state.data}
+            planView={state.planView}
+            templateDraft={state.templateDraft}
+            exerciseDraft={state.exerciseDraft}
+            onBack={goBack}
+            onOpenTemplateGroup={openTemplateGroup}
+            onOpenTemplateCreate={openTemplateCreate}
+            onOpenTemplateEdit={openTemplateEdit}
+            onOpenExerciseGroup={openExerciseGroup}
+            onOpenExerciseCreate={openExerciseCreate}
+            onOpenExerciseEdit={openExerciseEdit}
+            onTemplateNameChange={handleTemplateNameChange}
+            onTemplateDefaultChange={handleTemplateDefaultChange}
+            onAddDraftExercise={addDraftExercise}
+            onRemoveDraftExercise={removeDraftExercise}
+            onTemplateDragStart={handleTemplateDragStart}
+            onSaveTemplate={handleSaveTemplate}
+            onDeleteTemplate={handleDeleteTemplate}
+            onExerciseNameChange={handleExerciseNameChange}
+            onSaveExercise={handleSaveExercise}
+            onDeleteExercise={handleDeleteExercise}
+            onExportData={handleExportData}
+            onImportData={handleImportData}
+            onClearWorkouts={handleClearWorkouts}
+          />
+        );
+      } else {
+        screenContent = (
+          <JournalView
+            data={state.data}
+            journalView={state.journalView}
+            onBack={goBack}
+            onOpenWorkout={openJournalWorkout}
+          />
+        );
+      }
+    }
 
-        <div className="tab-view" hidden={state.activeTab !== "plan"}>
-        <PlanView
-          data={state.data}
-          planView={state.planView}
-          templateDraft={state.templateDraft}
-          exerciseDraft={state.exerciseDraft}
-          onBack={goBack}
-          onOpenTemplateGroup={openTemplateGroup}
-          onOpenTemplateCreate={openTemplateCreate}
-          onOpenTemplateEdit={openTemplateEdit}
-          onOpenExerciseGroup={openExerciseGroup}
-          onOpenExerciseCreate={openExerciseCreate}
-          onOpenExerciseEdit={openExerciseEdit}
-          onTemplateNameChange={handleTemplateNameChange}
-          onTemplateDefaultChange={handleTemplateDefaultChange}
-          onAddDraftExercise={addDraftExercise}
-          onRemoveDraftExercise={removeDraftExercise}
-          onTemplateDragStart={handleTemplateDragStart}
-          onSaveTemplate={handleSaveTemplate}
-          onDeleteTemplate={handleDeleteTemplate}
-          onExerciseNameChange={handleExerciseNameChange}
-          onSaveExercise={handleSaveExercise}
-          onDeleteExercise={handleDeleteExercise}
-          onExportData={handleExportData}
-          onImportData={handleImportData}
-          onClearWorkouts={handleClearWorkouts}
-        />
-        </div>
-
-        <div className="tab-view" hidden={state.activeTab !== "journal"}>
-          <JournalView data={state.data} />
-        </div>
-      </>
+    return (
+      <motion.div
+        key={screenKey}
+        className="screen-motion-frame"
+        custom={screenAnimationMode}
+        variants={screenMotionVariants}
+        initial={screenInitial}
+        animate="animate"
+        transition={screenTransition}
+      >
+        {screenContent}
+      </motion.div>
     );
   }, [
     addDraftExercise,
@@ -1651,7 +1974,7 @@ function App() {
     openExerciseEdit,
     openExerciseGroup,
     openExerciseReplacement,
-    openFullWorkoutPlaceholder,
+    openJournalWorkout,
     openTemplateCreate,
     openTemplateEdit,
     openTemplateGroup,
@@ -1659,6 +1982,7 @@ function App() {
     openWorkoutPreparation,
     removeDraftExercise,
     handleStartWorkout,
+    shouldReduceMotion,
     state.activeTab,
     state.activeWorkoutSession,
     state.data,
@@ -1666,6 +1990,7 @@ function App() {
     state.exerciseDraft,
     state.homeView,
     state.isLoading,
+    state.journalView,
     state.planView,
     state.templateDraft,
   ]);
@@ -1687,20 +2012,30 @@ function App() {
 
       <Notice notice={state.notice} />
 
-      <TemplateSelector
-        data={state.data}
-        selector={state.templateSelector}
-        onClose={closeTemplateSelector}
-        onSelect={selectWorkoutTemplate}
-      />
+      <AnimatePresence>
+        {state.templateSelector ? (
+          <TemplateSelector
+            key="template-selector"
+            data={state.data}
+            selector={state.templateSelector}
+            onClose={closeTemplateSelector}
+            onSelect={selectWorkoutTemplate}
+          />
+        ) : null}
+      </AnimatePresence>
 
-      <ActiveExerciseReplacementSheet
-        data={state.data}
-        selector={state.activeExerciseReplacement}
-        session={getActiveWorkoutSessionFromState(state)}
-        onClose={closeExerciseReplacement}
-        onSelect={selectReplacementExercise}
-      />
+      <AnimatePresence>
+        {state.activeExerciseReplacement ? (
+          <ActiveExerciseReplacementSheet
+            key="exercise-replacement"
+            data={state.data}
+            selector={state.activeExerciseReplacement}
+            session={getActiveWorkoutSessionFromState(state)}
+            onClose={closeExerciseReplacement}
+            onSelect={selectReplacementExercise}
+          />
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1736,21 +2071,61 @@ function ErrorScreen({ message }) {
   );
 }
 
-function BottomNav({ activeTab, onTabChange }) {
+function ScreenTitle({ children, onBack }) {
   return (
-    <nav id="bottomNav" className="bottom-nav" aria-label="Основная навигация">
-      {TABS.map((tab) => (
-        <button
-          key={tab.id}
-          className={`nav-button${activeTab === tab.id ? " is-active" : ""}`}
-          type="button"
-          aria-label={tab.label}
-          onClick={() => onTabChange(tab.id)}
-        >
-          <SvgIcon name={tab.icon} />
+    <div className="screen-title-row">
+      {onBack ? (
+        <button className="back-icon-button" type="button" aria-label="Назад" onClick={onBack}>
+          <SvgIcon name="arrowLeft" />
         </button>
-      ))}
-    </nav>
+      ) : null}
+      <h1>{children}</h1>
+    </div>
+  );
+}
+
+function BottomNav({ activeTab, onTabChange }) {
+  const shouldReduceMotion = useReducedMotion();
+  const indicatorTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : {
+        stiffness: 500,
+        damping: 38,
+        mass: 0.7,
+        type: "spring",
+      };
+
+  return (
+    <LayoutGroup id="bottom-nav">
+      <nav id="bottomNav" className="bottom-nav" aria-label="Основная навигация">
+        {TABS.map((tab) => {
+          const isActive = activeTab === tab.id;
+
+          return (
+            <button
+              key={tab.id}
+              className={`nav-button${isActive ? " is-active" : ""}`}
+              type="button"
+              aria-label={tab.label}
+              aria-current={isActive ? "page" : undefined}
+              onClick={() => onTabChange(tab.id)}
+            >
+              {isActive ? (
+                <motion.span
+                  className="nav-active-indicator"
+                  layoutId="bottom-nav-active-indicator"
+                  transition={indicatorTransition}
+                  aria-hidden="true"
+                />
+              ) : null}
+              <span className="nav-icon-layer">
+                <SvgIcon name={tab.icon} />
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+    </LayoutGroup>
   );
 }
 
@@ -1839,36 +2214,11 @@ function HomeView({
   }
 
   const workoutCards = buildWorkoutGroupCards(data);
-  const progress = getCycleProgress(data);
-  const completedPercent =
-    progress.totalCount > 0 ? Math.round((progress.completedCount / progress.totalCount) * 100) : 0;
-
   return (
     <section className="screen home-screen">
       <header className="screen-header">
         <h1>Главная</h1>
       </header>
-
-      <section className="cycle-summary">
-        <div className="cycle-summary-main">
-          <div>
-            <span className="summary-label">Тренировочный цикл</span>
-            <strong>
-              {progress.completedCount} из {progress.totalCount} выполнено
-            </strong>
-          </div>
-        </div>
-        <div
-          className="progress-track"
-          role="progressbar"
-          aria-label="Прогресс тренировочного цикла"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow={completedPercent}
-        >
-          <span style={{ width: `${completedPercent}%` }}></span>
-        </div>
-      </section>
 
       <div className="home-section-title">
         <span>Выбери тренировку для старта</span>
@@ -1936,9 +2286,8 @@ function WorkoutPreparationScreen({
   if (!details.workoutGroup) {
     return (
       <section className="screen workout-prep-screen">
-        <ScreenBackButton onBack={onBack} />
         <div className="empty-state error-state">
-          <h1>Тренировка не найдена</h1>
+          <ScreenTitle onBack={onBack}>Тренировка не найдена</ScreenTitle>
           <p>Вернись на главную и выбери тренировку ещё раз.</p>
         </div>
       </section>
@@ -1947,9 +2296,8 @@ function WorkoutPreparationScreen({
 
   return (
     <section className="screen workout-prep-screen">
-      <ScreenBackButton onBack={onBack} />
       <header className="screen-header">
-        <h1>{details.workoutGroup.name}</h1>
+        <ScreenTitle onBack={onBack}>{details.workoutGroup.name}</ScreenTitle>
         <p className="screen-subtitle">Последний раз: {formatRelativeDate(details.lastWorkoutDate)}</p>
       </header>
 
@@ -2035,22 +2383,43 @@ function ActiveWorkoutScreen({
   onNextExercise,
   onFinish,
 }) {
+  const shouldReduceMotion = useReducedMotion();
+  const exerciseLogsLength = session?.exerciseLogs?.length ?? 0;
+  const currentIndex = exerciseLogsLength
+    ? Math.min(
+        Math.max(Number(session.currentExerciseIndex ?? 0), 0),
+        exerciseLogsLength - 1,
+      )
+    : 0;
+  const exerciseMotionStateRef = useRef({ index: currentIndex, sessionId: session?.id ?? null });
+  const previousExerciseMotionState = exerciseMotionStateRef.current;
+  const exerciseMotionMode =
+    previousExerciseMotionState.sessionId !== (session?.id ?? null)
+      ? "main"
+      : currentIndex > previousExerciseMotionState.index
+        ? "secondary-open"
+        : currentIndex < previousExerciseMotionState.index
+          ? "secondary-close"
+          : "main";
+
+  useEffect(() => {
+    exerciseMotionStateRef.current = {
+      index: currentIndex,
+      sessionId: session?.id ?? null,
+    };
+  }, [currentIndex, session?.id]);
+
   if (!session || !session.exerciseLogs?.length) {
     return (
       <section className="screen active-workout-screen">
-        <ScreenBackButton onBack={onBack} />
         <div className="empty-state error-state">
-          <h1>Активная тренировка не найдена</h1>
+          <ScreenTitle onBack={onBack}>Активная тренировка не найдена</ScreenTitle>
           <p>Вернись на главную и начни тренировку ещё раз.</p>
         </div>
       </section>
     );
   }
 
-  const currentIndex = Math.min(
-    Math.max(Number(session.currentExerciseIndex ?? 0), 0),
-    session.exerciseLogs.length - 1,
-  );
   const exerciseLog = session.exerciseLogs[currentIndex];
   const groupExercises = session.exerciseLogs.filter(
     (item) => item.muscleGroupId === exerciseLog.muscleGroupId,
@@ -2064,69 +2433,81 @@ function ActiveWorkoutScreen({
 
   return (
     <section className="screen active-workout-screen">
-      <ScreenBackButton onBack={onBack} />
-      <header className="screen-header active-workout-header">
-        <h1>{exerciseProgressLabel}</h1>
-        <p className="active-exercise-title">
-          Упражнение {exerciseLog.exerciseNameSnapshot}
-        </p>
-        <button
-          className="action-button secondary-action active-replace-button"
-          type="button"
-          onClick={() => onOpenReplacement(currentIndex)}
-        >
-          <span>Заменить упражнение</span>
-        </button>
-      </header>
+      <motion.div
+        key={`${session.id}-${currentIndex}`}
+        className="active-exercise-motion"
+        custom={exerciseMotionMode}
+        variants={screenMotionVariants}
+        initial={shouldReduceMotion || exerciseMotionMode === "main" ? false : "initial"}
+        animate="animate"
+        transition={shouldReduceMotion ? { duration: 0 } : secondaryScreenTransition}
+      >
+        <header className="screen-header active-workout-header">
+          <ScreenTitle onBack={onBack}>{exerciseProgressLabel}</ScreenTitle>
+          <p className="active-exercise-title">
+            Упражнение {exerciseLog.exerciseNameSnapshot}
+          </p>
+          <button
+            className="action-button secondary-action active-replace-button"
+            type="button"
+            onClick={() => onOpenReplacement(currentIndex)}
+          >
+            <span>Заменить упражнение</span>
+          </button>
+        </header>
 
-      <section className="panel active-exercise-panel">
-        <p className="active-previous-sets">
-          <span>Прошлый раз:</span> <strong>{formatSetList(exerciseLog.previousSets)}</strong>
-        </p>
-      </section>
+        <section className="panel active-exercise-panel">
+          <p className="active-previous-sets">
+            <span>Прошлый раз:</span> <strong>{formatSetList(exerciseLog.previousSets)}</strong>
+          </p>
+        </section>
 
-      <section className="panel plan-section active-sets-panel">
-        <div className="active-set-list">
-          {sets.map((set, index) => (
-            <div key={index} className="active-set-row">
-              <span className="active-set-number">{index + 1}</span>
-              <label className="active-set-input">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={set.weightKg ?? ""}
-                  placeholder="0"
-                  aria-label={`Вес в подходе ${index + 1}`}
-                  onChange={(event) => onSetChange(currentIndex, index, "weightKg", event.target.value)}
+        <section className="panel plan-section active-sets-panel">
+          <div className="active-set-list">
+            {sets.map((set, index) => (
+              <div
+                key={`${exerciseLog.exerciseId}-${set.setNumber ?? index}`}
+                className="active-set-row"
+              >
+                <span className="active-set-number">{index + 1}</span>
+                <label className="active-set-input">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={set.weightKg ?? ""}
+                    placeholder="0"
+                    aria-label={`Вес в подходе ${index + 1}`}
+                    onChange={(event) => onSetChange(currentIndex, index, "weightKg", event.target.value)}
+                  />
+                  <span>кг</span>
+                </label>
+                <label className="active-set-input">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={set.reps ?? ""}
+                    placeholder="0"
+                    aria-label={`Повторы в подходе ${index + 1}`}
+                    onChange={(event) => onSetChange(currentIndex, index, "reps", event.target.value)}
+                  />
+                  <span>повт.</span>
+                </label>
+                <button
+                  className="active-set-remove-button"
+                  type="button"
+                  disabled={!canRemoveSet}
+                  aria-label={`Удалить подход ${index + 1}`}
+                  onClick={() => onRemoveSet(currentIndex, index)}
                 />
-                <span>кг</span>
-              </label>
-              <label className="active-set-input">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={set.reps ?? ""}
-                  placeholder="0"
-                  aria-label={`Повторы в подходе ${index + 1}`}
-                  onChange={(event) => onSetChange(currentIndex, index, "reps", event.target.value)}
-                />
-                <span>повт.</span>
-              </label>
-              <button
-                className="active-set-remove-button"
-                type="button"
-                disabled={!canRemoveSet}
-                aria-label={`Удалить подход ${index + 1}`}
-                onClick={() => onRemoveSet(currentIndex, index)}
-              />
-            </div>
-          ))}
-        </div>
+              </div>
+            ))}
+          </div>
 
-        <button className="action-button secondary-action active-add-set-button" type="button" onClick={() => onAddSet(currentIndex)}>
-          <span>Добавить подход</span>
-        </button>
-      </section>
+          <button className="action-button secondary-action active-add-set-button" type="button" onClick={() => onAddSet(currentIndex)}>
+            <span>Добавить подход</span>
+          </button>
+        </section>
+      </motion.div>
 
       <div className="active-navigation-actions">
         <button className="action-button active-next-button" type="button" onClick={isLastExercise ? onFinish : onNextExercise}>
@@ -2177,7 +2558,7 @@ function PreviousWorkoutBlock({ workout, onOpenFullWorkout }) {
           ))}
         </div>
       </div>
-      <button className="action-button" type="button" onClick={onOpenFullWorkout}>
+      <button className="action-button" type="button" onClick={() => onOpenFullWorkout(workout.id)}>
         <span>Открыть полностью</span>
       </button>
     </section>
@@ -2294,7 +2675,6 @@ function PlanOverview({
     <section className="screen plan-screen">
       <header className="screen-header">
         <h1>План</h1>
-        <p className="screen-subtitle">Настройка тренировок, шаблонов и упражнений</p>
       </header>
 
       <section className="panel plan-section">
@@ -2386,9 +2766,8 @@ function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
 
   return (
     <section className="screen plan-screen">
-      <ScreenBackButton onBack={onBack} />
       <header className="screen-header">
-        <h1>Шаблоны: {details.muscleGroup?.name || "Мышца"}</h1>
+        <ScreenTitle onBack={onBack}>Шаблоны: {details.muscleGroup?.name || "Мышца"}</ScreenTitle>
       </header>
 
       <div className="template-list">
@@ -2461,9 +2840,8 @@ function TemplateFormScreen({
 
   return (
     <section className="screen plan-screen">
-      <ScreenBackButton onBack={onBack} />
       <header className="screen-header">
-        <h1>{isEdit ? `Шаблон: ${details.muscleGroup?.name || "Мышца"}` : `Шаблон: ${details.muscleGroup?.name || "Мышца"}`}</h1>
+        <ScreenTitle onBack={onBack}>{isEdit ? `Шаблон: ${details.muscleGroup?.name || "Мышца"}` : `Шаблон: ${details.muscleGroup?.name || "Мышца"}`}</ScreenTitle>
       </header>
 
       <form className="template-form" onSubmit={onSave}>
@@ -2519,11 +2897,62 @@ function TemplateFormScreen({
 }
 
 function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, onRemoveExercise, onDragStart }) {
+  const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState(null);
+  const [removingExerciseIds, setRemovingExerciseIds] = useState(() => new Set());
+  const addAnimationTimerRef = useRef(null);
+  const removeAnimationTimersRef = useRef(new Map());
   const selectedSet = new Set(selectedExerciseIds);
   const selectedExercises = selectedExerciseIds.map((exerciseId) => {
     const exercise = details.exercises.find((item) => item.id === exerciseId);
     return exercise || { id: exerciseId, name: "Упражнение не найдено", isMissing: true };
   });
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(addAnimationTimerRef.current);
+      removeAnimationTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      removeAnimationTimersRef.current.clear();
+    };
+  }, []);
+
+  const runAddExercise = useCallback(
+    (exerciseId) => {
+      window.clearTimeout(addAnimationTimerRef.current);
+      setRecentlyAddedExerciseId(exerciseId);
+      addAnimationTimerRef.current = window.setTimeout(() => {
+        setRecentlyAddedExerciseId(null);
+      }, TEMPLATE_EXERCISE_ANIMATION_MS);
+      onAddExercise(exerciseId);
+    },
+    [onAddExercise],
+  );
+
+  const runRemoveExercise = useCallback(
+    (exerciseId) => {
+      if (removeAnimationTimersRef.current.has(exerciseId)) {
+        return;
+      }
+
+      setRemovingExerciseIds((current) => {
+        const next = new Set(current);
+        next.add(exerciseId);
+        return next;
+      });
+
+      const timerId = window.setTimeout(() => {
+        onRemoveExercise(exerciseId);
+        removeAnimationTimersRef.current.delete(exerciseId);
+        setRemovingExerciseIds((current) => {
+          const next = new Set(current);
+          next.delete(exerciseId);
+          return next;
+        });
+      }, TEMPLATE_EXERCISE_ANIMATION_MS);
+
+      removeAnimationTimersRef.current.set(exerciseId, timerId);
+    },
+    [onRemoveExercise],
+  );
 
   return (
     <>
@@ -2533,45 +2962,50 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
         </div>
         <div className="template-builder-scroll" data-selected-exercise-list>
           {selectedExercises.length ? (
-            selectedExercises.map((exercise, index) => (
-              <div
-                key={`${exercise.id}-${index}`}
-                className={`plan-row template-selected-item${exercise.isMissing ? " is-missing" : ""}`}
-                data-selected-exercise-item
-                data-selected-exercise-id={exercise.id}
-                data-exercise-id={exercise.id}
-              >
-                <input type="hidden" name="exerciseIds" value={exercise.id} data-selected-exercise-input />
-                <button
-                  className="template-drag-handle"
-                  type="button"
-                  data-template-drag-handle
-                  aria-label={`Перетащить упражнение ${exercise.name}`}
-                  onPointerDown={onDragStart}
-                >
-                  <span className="template-drag-grip" aria-hidden="true">
-                    <span />
-                    <span />
-                    <span />
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                </button>
-                <span className="template-selected-number" data-selected-exercise-index data-selected-exercise-number>
-                  {index + 1}
-                </span>
-                <span className="template-selected-name">{exercise.name}</span>
-                <button
-                  className="template-remove-button"
-                  type="button"
-                  data-action="remove-template-exercise"
+            selectedExercises.map((exercise, index) => {
+              const isEntering = recentlyAddedExerciseId === exercise.id;
+              const isRemoving = removingExerciseIds.has(exercise.id);
+
+              return (
+                <div
+                  key={`${exercise.id}-${index}`}
+                  className={`plan-row template-selected-item${exercise.isMissing ? " is-missing" : ""}${isEntering ? " is-entering" : ""}${isRemoving ? " is-removing" : ""}`}
+                  data-selected-exercise-item
+                  data-selected-exercise-id={exercise.id}
                   data-exercise-id={exercise.id}
-                  aria-label={`Убрать ${exercise.name}`}
-                  onClick={() => onRemoveExercise(exercise.id)}
-                />
-              </div>
-            ))
+                >
+                  <input type="hidden" name="exerciseIds" value={exercise.id} data-selected-exercise-input />
+                  <button
+                    className="template-drag-handle"
+                    type="button"
+                    data-template-drag-handle
+                    aria-label={`Перетащить упражнение ${exercise.name}`}
+                    onPointerDown={onDragStart}
+                  >
+                    <span className="template-drag-grip" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </button>
+                  <span className="template-selected-number" data-selected-exercise-index data-selected-exercise-number>
+                    {index + 1}
+                  </span>
+                  <span className="template-selected-name">{exercise.name}</span>
+                  <button
+                    className="template-remove-button"
+                    type="button"
+                    data-action="remove-template-exercise"
+                    data-exercise-id={exercise.id}
+                    aria-label={`Убрать ${exercise.name}`}
+                    onClick={() => runRemoveExercise(exercise.id)}
+                  />
+                </div>
+              );
+            })
           ) : (
             <div className="template-builder-empty">Выбери упражнения ниже</div>
           )}
@@ -2587,16 +3021,19 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
             {details.exercises.length ? (
               details.exercises.map((exercise) => {
                 const isSelected = selectedSet.has(exercise.id);
+                const isRemoving = removingExerciseIds.has(exercise.id);
+                const isBaseSelected = isSelected && !isRemoving;
+
                 return (
                   <button
                     key={exercise.id}
-                    className={`plan-row template-base-exercise-button${isSelected ? " is-selected" : ""}`}
+                    className={`plan-row template-base-exercise-button${isBaseSelected ? " is-selected" : ""}`}
                     type="button"
-                    aria-pressed={isSelected}
-                    onClick={() => (isSelected ? onRemoveExercise(exercise.id) : onAddExercise(exercise.id))}
+                    aria-pressed={isBaseSelected}
+                    onClick={() => (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id))}
                   >
                     <span className="template-choice-name">{exercise.name}</span>
-                    {isSelected ? <span className="template-base-status">Выбрано</span> : null}
+                    <span className={`template-base-status${isBaseSelected ? " is-visible" : ""}`}>Выбрано</span>
                   </button>
                 );
               })
@@ -2615,9 +3052,8 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
 
   return (
     <section className="screen plan-screen">
-      <ScreenBackButton onBack={onBack} />
       <header className="screen-header">
-        <h1>База: {details.muscleGroup?.name || "Мышца"}</h1>
+        <ScreenTitle onBack={onBack}>База: {details.muscleGroup?.name || "Мышца"}</ScreenTitle>
       </header>
 
       <div className="template-list">
@@ -2656,9 +3092,8 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onSav
 
   return (
     <section className="screen plan-screen">
-      <ScreenBackButton onBack={onBack} />
       <header className="screen-header">
-        <h1>{isEdit ? "Редактировать упражнение" : `Новая запись: ${details.muscleGroup?.name || "Мышца"}`}</h1>
+        <ScreenTitle onBack={onBack}>{isEdit ? "Редактировать упражнение" : `Новая запись: ${details.muscleGroup?.name || "Мышца"}`}</ScreenTitle>
       </header>
 
       <form className="template-form" onSubmit={onSave}>
@@ -2688,57 +3123,183 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onSav
   );
 }
 
-function JournalView({ data }) {
-  const logs = [...(data.workoutLogs || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+function JournalView({ data, journalView, onBack, onOpenWorkout }) {
+  if (journalView.name === "details") {
+    return (
+      <JournalWorkoutDetails
+        data={data}
+        workoutLogId={journalView.workoutLogId}
+        onBack={onBack}
+      />
+    );
+  }
+
+  const entries = buildJournalEntries(data);
 
   return (
-    <section className="screen">
+    <section className="screen journal-screen">
       <header className="screen-header">
         <h1>Журнал</h1>
       </header>
 
-      {logs.length ? (
-        <div className="workout-list">
-          {logs.map((log) => (
-            <article key={log.id} className="workout-card">
-              <div className="card-topline">
-                <h2>{log.workoutGroupSnapshot?.name || "Тренировка"}</h2>
-                <span className="muted">{formatDate(log.date)}</span>
-              </div>
-            </article>
-          ))}
+      {entries.length ? (
+        <div className="journal-list">
+          {entries.map((entry) => {
+            const dateParts = getJournalDateParts(entry.date);
+
+            return (
+              <button
+                key={entry.id}
+                className="journal-card"
+                type="button"
+                onClick={() => onOpenWorkout(entry.id)}
+              >
+                <div className="journal-card-header">
+                  <div className="journal-card-date" aria-label={formatJournalDate(entry.date)}>
+                    <strong>{dateParts.day}</strong>
+                    <span>{dateParts.month}</span>
+                  </div>
+
+                  <div className="journal-card-title">
+                    <h2>{entry.name}</h2>
+                  </div>
+
+                  <span className="journal-card-chevron" aria-hidden="true" />
+                </div>
+
+                <div className="journal-card-groups">
+                  {entry.sections.map((section) => (
+                    <div key={section.muscleGroup.id} className="journal-card-group">
+                      <strong>
+                        {section.muscleGroup.name}
+                        {section.templateName && section.templateName !== "Шаблон не указан" ? (
+                          <span className="journal-card-template">: {section.templateName}</span>
+                        ) : null}
+                      </strong>
+                      <p>
+                        {section.exercises.map((exercise) => exercise.name).join(" · ") ||
+                          "Нет списка упражнений"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </button>
+            );
+          })}
         </div>
       ) : (
-        <div className="empty-state">
+        <div className="empty-state compact-empty-state journal-empty-state">
           <SvgIcon name="journal" />
           <h2>Пока нет завершённых тренировок</h2>
+          <p>После завершения тренировки записи появятся здесь.</p>
         </div>
       )}
     </section>
   );
 }
 
-function ScreenBackButton({ onBack }) {
+function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
+  const details = buildJournalWorkoutDetails(data, workoutLogId);
+
+  if (!details) {
+    return (
+      <section className="screen journal-detail-screen">
+        <div className="empty-state error-state">
+          <ScreenTitle onBack={onBack}>Запись не найдена</ScreenTitle>
+          <p>Вернись в журнал и выбери тренировку ещё раз.</p>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <button className="back-button" type="button" onClick={onBack}>
-      Назад
-    </button>
+    <section className="screen journal-detail-screen">
+      <header className="screen-header">
+        <ScreenTitle onBack={onBack}>{details.name}</ScreenTitle>
+        <p className="screen-subtitle">{formatJournalDate(details.date)}</p>
+      </header>
+
+      {details.sections.map((section) => (
+        <section key={section.muscleGroup.id} className="journal-detail-group">
+          <div className="journal-muscle-header">
+            <h2>{section.muscleGroup.name}</h2>
+            <span className="journal-section-template">
+              Шаблон: {section.templateName || "не указан"}
+            </span>
+          </div>
+
+          <div className="journal-exercise-list">
+            {section.exercises.map((exercise, exerciseIndex) => (
+              <article key={`${exercise.id}-${exerciseIndex}`} className="journal-exercise-card">
+                <h2>
+                  <span>{exercise.name}</span>
+                  {exercise.isReplacement ? (
+                    <>
+                      <span className="journal-replacement-divider">|</span>
+                      <span className="journal-replacement-note">вместо: {exercise.plannedName}</span>
+                    </>
+                  ) : null}
+                </h2>
+
+                {exercise.sets.length ? (
+                  <ol className="journal-set-list">
+                    {exercise.sets.map((set, setIndex) => (
+                      <li key={`${exercise.id}-${setIndex}`}>
+                        <span>{set.setNumber ?? setIndex + 1} подход</span>
+                        <strong>{formatWorkoutSet(set)}</strong>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="journal-empty-sets">Подходы не записаны</p>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      ))}
+    </section>
   );
 }
 
 function TemplateSelector({ data, selector, onClose, onSelect }) {
+  const shouldReduceMotion = useReducedMotion();
+
   if (!data || !selector) {
     return null;
   }
 
   const details = buildTemplatesForMuscleGroup(data, selector.muscleGroupId);
   const workoutGroup = data.workoutGroups.find((group) => group.id === selector.workoutGroupId);
-  const selectedTemplateId = workoutGroup?.selectedTemplateByMuscleGroupId?.[selector.muscleGroupId];
+  const selectedTemplateId = workoutGroup
+    ? getSelectedTemplateIdForMuscleGroup(data, workoutGroup, selector.muscleGroupId)
+    : null;
 
   return (
-    <div className="template-select-layer" role="presentation">
-      <button className="template-select-backdrop" type="button" aria-label="Закрыть выбор шаблона" onClick={onClose} />
-      <section className="template-select-sheet" role="dialog" aria-modal="true" aria-label="Выбор шаблона">
+    <motion.div
+      className="template-select-layer"
+      role="presentation"
+    >
+      <motion.button
+        className="template-select-backdrop"
+        type="button"
+        aria-label="Закрыть выбор шаблона"
+        initial={shouldReduceMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetBackdropTransition}
+        onClick={onClose}
+      />
+      <motion.section
+        className="template-select-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Выбор шаблона"
+        initial={shouldReduceMotion ? false : { y: "100%" }}
+        animate={{ y: 0 }}
+        exit={shouldReduceMotion ? undefined : { y: "100%" }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
+      >
         <div className="template-select-handle" aria-hidden="true" />
         <div className="template-select-list">
           {details.templates.length ? (
@@ -2759,12 +3320,14 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
             </div>
           )}
         </div>
-      </section>
-    </div>
+      </motion.section>
+    </motion.div>
   );
 }
 
 function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSelect }) {
+  const shouldReduceMotion = useReducedMotion();
+
   if (!data || !selector || !session) {
     return null;
   }
@@ -2797,9 +3360,30 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
     }));
 
   return (
-    <div className="template-select-layer" role="presentation">
-      <button className="template-select-backdrop" type="button" aria-label="Закрыть выбор упражнения" onClick={onClose} />
-      <section className="template-select-sheet" role="dialog" aria-modal="true" aria-label="Замена упражнения">
+    <motion.div
+      className="template-select-layer"
+      role="presentation"
+    >
+      <motion.button
+        className="template-select-backdrop"
+        type="button"
+        aria-label="Закрыть выбор упражнения"
+        initial={shouldReduceMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetBackdropTransition}
+        onClick={onClose}
+      />
+      <motion.section
+        className="template-select-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Замена упражнения"
+        initial={shouldReduceMotion ? false : { y: "100%" }}
+        animate={{ y: 0 }}
+        exit={shouldReduceMotion ? undefined : { y: "100%" }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
+      >
         <div className="template-select-handle" aria-hidden="true" />
         <div className="template-select-list">
           {exercises.length ? (
@@ -2834,8 +3418,8 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
             </div>
           )}
         </div>
-      </section>
-    </div>
+      </motion.section>
+    </motion.div>
   );
 }
 

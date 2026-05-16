@@ -313,6 +313,7 @@ export async function saveExerciseTemplate(template) {
   try {
     const metadata = await readMetadata(database);
     const templates = await readStore(database, "exerciseTemplates");
+    const workoutGroups = await readStore(database, "workoutGroups");
     const normalizedTemplate = normalizeExerciseTemplate(template);
     const templatesAfterSave = templates.some((item) => item.id === normalizedTemplate.id)
       ? templates.map((item) => (item.id === normalizedTemplate.id ? normalizedTemplate : item))
@@ -323,13 +324,57 @@ export async function saveExerciseTemplate(template) {
       normalizedTemplate.muscleGroupId,
       preferredDefaultId,
     );
-    const transaction = database.transaction(["metadata", "exerciseTemplates"], "readwrite");
+    const defaultTemplateId = normalizedResult.defaultTemplateId;
+    const normalizedTemplatesById = new Map(
+      normalizedResult.templates.map((item) => [item.id, item]),
+    );
+    const transaction = database.transaction(
+      ["metadata", "exerciseTemplates", "workoutGroups"],
+      "readwrite",
+    );
     const done = transactionDone(transaction);
     const templateStore = transaction.objectStore("exerciseTemplates");
+    const workoutGroupStore = transaction.objectStore("workoutGroups");
 
     for (const nextTemplate of normalizedResult.templates) {
       if (nextTemplate.muscleGroupId === normalizedTemplate.muscleGroupId) {
         templateStore.put(nextTemplate);
+      }
+    }
+
+    if (defaultTemplateId) {
+      for (const workoutGroup of workoutGroups) {
+        if (!workoutGroup.muscleGroupIds?.includes(normalizedTemplate.muscleGroupId)) {
+          continue;
+        }
+
+        const selectedTemplateId =
+          workoutGroup.selectedTemplateByMuscleGroupId?.[normalizedTemplate.muscleGroupId];
+        const overrideValue =
+          workoutGroup.selectedTemplateOverrideByMuscleGroupId?.[normalizedTemplate.muscleGroupId];
+        const selectedTemplate = normalizedTemplatesById.get(selectedTemplateId);
+        const hasLegacyManualSelection =
+          overrideValue === undefined &&
+          selectedTemplate &&
+          !selectedTemplate.isDefault &&
+          !isProtectedTemplate(selectedTemplate);
+        const hasManualSelection = overrideValue === true || hasLegacyManualSelection;
+
+        if (hasManualSelection || selectedTemplateId === defaultTemplateId) {
+          continue;
+        }
+
+        workoutGroupStore.put({
+          ...workoutGroup,
+          selectedTemplateByMuscleGroupId: {
+            ...workoutGroup.selectedTemplateByMuscleGroupId,
+            [normalizedTemplate.muscleGroupId]: defaultTemplateId,
+          },
+          selectedTemplateOverrideByMuscleGroupId: {
+            ...workoutGroup.selectedTemplateOverrideByMuscleGroupId,
+            [normalizedTemplate.muscleGroupId]: false,
+          },
+        });
       }
     }
 
@@ -400,6 +445,10 @@ export async function saveWorkoutGroupSelectedTemplate(workoutGroupId, muscleGro
       selectedTemplateByMuscleGroupId: {
         ...workoutGroup.selectedTemplateByMuscleGroupId,
         [muscleGroupId]: template.id,
+      },
+      selectedTemplateOverrideByMuscleGroupId: {
+        ...workoutGroup.selectedTemplateOverrideByMuscleGroupId,
+        [muscleGroupId]: !template.isDefault,
       },
     });
     transaction.objectStore("metadata").put({
@@ -560,6 +609,10 @@ export async function deleteExerciseTemplate(templateId) {
             ...workoutGroup.selectedTemplateByMuscleGroupId,
             [template.muscleGroupId]: fallbackTemplateId,
           },
+          selectedTemplateOverrideByMuscleGroupId: {
+            ...workoutGroup.selectedTemplateOverrideByMuscleGroupId,
+            [template.muscleGroupId]: false,
+          },
         });
       }
     }
@@ -653,27 +706,6 @@ function createWorkoutLogFromSession(session, completedAt) {
   };
 }
 
-function getUpdatedCycleAfterWorkout(cycle, workoutGroupId) {
-  if (!cycle.workoutGroupIds?.includes(workoutGroupId)) {
-    return cycle;
-  }
-
-  const workoutGroupIds = cycle.workoutGroupIds;
-  const completedSet = new Set(
-    (cycle.completedWorkoutGroupIdsInCurrentRound ?? []).filter((id) =>
-      workoutGroupIds.includes(id),
-    ),
-  );
-
-  completedSet.add(workoutGroupId);
-
-  return {
-    ...cycle,
-    currentIndex: (workoutGroupIds.indexOf(workoutGroupId) + 1) % workoutGroupIds.length,
-    completedWorkoutGroupIdsInCurrentRound: [...completedSet],
-  };
-}
-
 export async function saveActiveWorkoutSession(session) {
   const database = await openAppDatabase();
 
@@ -743,7 +775,6 @@ export async function finishActiveWorkoutSession(session) {
 
   try {
     const metadata = await readMetadata(database);
-    const workoutCycles = await readStore(database, "workoutCycles");
     const exercises = await readStore(database, "exercises");
     const templates = await readStore(database, "exerciseTemplates");
     const activeWorkoutSessions = await readStore(database, "activeWorkoutSessions");
@@ -752,13 +783,12 @@ export async function finishActiveWorkoutSession(session) {
     const usedExerciseIds = new Set((session.exerciseLogs ?? []).map((log) => log.exerciseId).filter(Boolean));
     const usedTemplateIds = new Set((session.templateSnapshots ?? []).map((template) => template.id).filter(Boolean));
     const transaction = database.transaction(
-      ["metadata", "activeWorkoutSessions", "workoutLogs", "workoutCycles", "exercises", "exerciseTemplates"],
+      ["metadata", "activeWorkoutSessions", "workoutLogs", "exercises", "exerciseTemplates"],
       "readwrite",
     );
     const done = transactionDone(transaction);
     const exerciseStore = transaction.objectStore("exercises");
     const templateStore = transaction.objectStore("exerciseTemplates");
-    const cycleStore = transaction.objectStore("workoutCycles");
     const activeSessionStore = transaction.objectStore("activeWorkoutSessions");
 
     transaction.objectStore("workoutLogs").put(workoutLog);
@@ -767,10 +797,6 @@ export async function finishActiveWorkoutSession(session) {
       if (activeSession.workoutGroupId === session.workoutGroupId) {
         activeSessionStore.delete(activeSession.id);
       }
-    }
-
-    for (const cycle of workoutCycles) {
-      cycleStore.put(getUpdatedCycleAfterWorkout(cycle, session.workoutGroupId));
     }
 
     for (const exercise of exercises) {
@@ -810,22 +836,10 @@ export async function clearWorkoutLogs() {
 
   try {
     const metadata = await readMetadata(database);
-    const workoutCycles = await readStore(database, "workoutCycles");
-    const transaction = database.transaction(
-      ["metadata", "workoutCycles", "workoutLogs"],
-      "readwrite",
-    );
+    const transaction = database.transaction(["metadata", "workoutLogs"], "readwrite");
     const done = transactionDone(transaction);
 
     transaction.objectStore("workoutLogs").clear();
-
-    for (const cycle of workoutCycles) {
-      transaction.objectStore("workoutCycles").put({
-        ...cycle,
-        currentIndex: 0,
-        completedWorkoutGroupIdsInCurrentRound: [],
-      });
-    }
 
     transaction.objectStore("metadata").put({
       id: "app",

@@ -8,27 +8,6 @@ export function getDefaultCycle(data) {
   return data.workoutCycles.find((cycle) => cycle.id === "cycle-default") ?? data.workoutCycles[0];
 }
 
-export function getCycleProgress(data) {
-  const cycle = getDefaultCycle(data);
-
-  if (!cycle) {
-    return {
-      completedCount: 0,
-      totalCount: 0,
-    };
-  }
-
-  const cycleWorkoutGroupIds = new Set(cycle.workoutGroupIds);
-  const completedCount = cycle.completedWorkoutGroupIdsInCurrentRound.filter((workoutGroupId) =>
-    cycleWorkoutGroupIds.has(workoutGroupId),
-  ).length;
-
-  return {
-    completedCount,
-    totalCount: cycle.workoutGroupIds.length,
-  };
-}
-
 function getWorkoutLogGroupId(log) {
   return (
     log.workoutGroupId ??
@@ -161,6 +140,58 @@ function getTemplateSnapshotForMuscleGroup(log, muscleGroupId) {
   );
 }
 
+function getMuscleGroupLogForMuscleGroup(log, muscleGroupId) {
+  return (log.muscleGroupLogs ?? []).find(
+    (muscleLog) =>
+      muscleLog?.muscleGroupId === muscleGroupId || muscleLog?.muscleGroup?.id === muscleGroupId,
+  ) ?? null;
+}
+
+function dedupeExerciseLogEntries(entries) {
+  const seen = new Set();
+  const result = [];
+
+  for (const entry of entries ?? []) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const key = [
+      entry.muscleGroupId ?? "",
+      entry.plannedExerciseId ?? "",
+      entry.exerciseId ?? "",
+      entry.exerciseNameSnapshot ?? entry.exerciseName ?? entry.name ?? "",
+    ].join("|");
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(entry);
+  }
+
+  return result;
+}
+
+function getExerciseLogEntriesForMuscleGroup(log, muscleGroupId) {
+  const muscleGroupLog = getMuscleGroupLogForMuscleGroup(log, muscleGroupId);
+
+  if (Array.isArray(muscleGroupLog?.exerciseLogs)) {
+    return dedupeExerciseLogEntries(muscleGroupLog.exerciseLogs);
+  }
+
+  if (Array.isArray(log.exerciseLogs)) {
+    return dedupeExerciseLogEntries(
+      log.exerciseLogs.filter((entry) => entry?.muscleGroupId === muscleGroupId),
+    );
+  }
+
+  return dedupeExerciseLogEntries(
+    collectExerciseLogEntries(log).filter((entry) => entry.muscleGroupId === muscleGroupId),
+  );
+}
+
 function getExerciseNamesFromSnapshot(snapshot) {
   if (!snapshot) {
     return [];
@@ -183,6 +214,271 @@ function getExerciseNamesFromSnapshot(snapshot) {
   return [];
 }
 
+function getWorkoutLogName(data, log) {
+  const workoutGroupsById = indexById(data.workoutGroups ?? []);
+  const workoutGroupId = getWorkoutLogGroupId(log);
+
+  return (
+    log.workoutGroupSnapshot?.name ??
+    log.workoutGroupNameSnapshot ??
+    (workoutGroupId ? workoutGroupsById.get(workoutGroupId)?.name : null) ??
+    "Тренировка"
+  );
+}
+
+function getMuscleGroupSnapshot(log, muscleGroupId) {
+  return (log.muscleGroupSnapshots ?? []).find(
+    (snapshot) => snapshot?.id === muscleGroupId || snapshot?.muscleGroupId === muscleGroupId,
+  ) ?? null;
+}
+
+function getExerciseSnapshotName(snapshotExercise) {
+  if (typeof snapshotExercise === "string") {
+    return snapshotExercise;
+  }
+
+  return (
+    snapshotExercise?.name ??
+    snapshotExercise?.exerciseNameSnapshot ??
+    snapshotExercise?.exerciseName ??
+    null
+  );
+}
+
+function getJournalSectionFallbacks(data, log, muscleGroupId, source = {}) {
+  const muscleGroupsById = indexById(data.muscleGroups ?? []);
+  const templateSnapshot = muscleGroupId ? getTemplateSnapshotForMuscleGroup(log, muscleGroupId) : null;
+  const muscleGroupSnapshot = muscleGroupId ? getMuscleGroupSnapshot(log, muscleGroupId) : null;
+  const fallbackMuscleGroup = muscleGroupId ? muscleGroupsById.get(muscleGroupId) : null;
+
+  return {
+    muscleGroupName:
+      source.muscleGroupNameSnapshot ??
+      source.muscleGroup?.name ??
+      templateSnapshot?.muscleGroupNameSnapshot ??
+      templateSnapshot?.muscleGroup?.name ??
+      muscleGroupSnapshot?.name ??
+      fallbackMuscleGroup?.name ??
+      "Мышца",
+    templateName:
+      source.templateNameSnapshot ??
+      source.templateName ??
+      source.exerciseTemplateName ??
+      templateSnapshot?.templateNameSnapshot ??
+      templateSnapshot?.templateName ??
+      templateSnapshot?.name ??
+      "Шаблон не указан",
+  };
+}
+
+function normalizeJournalSet(set, index) {
+  return {
+    setNumber: set?.setNumber ?? index + 1,
+    weightKg: set?.weightKg ?? null,
+    reps: set?.reps ?? null,
+  };
+}
+
+function getJournalExerciseName(data, exerciseLog) {
+  const exercisesById = indexById(data.exercises ?? []);
+
+  return (
+    exerciseLog.exerciseNameSnapshot ??
+    exerciseLog.exerciseName ??
+    exerciseLog.name ??
+    (exerciseLog.exerciseId ? exercisesById.get(exerciseLog.exerciseId)?.name : null) ??
+    "Упражнение"
+  );
+}
+
+function getJournalPlannedExerciseName(data, exerciseLog) {
+  const exercisesById = indexById(data.exercises ?? []);
+  const plannedExerciseId =
+    exerciseLog.plannedExerciseId ??
+    exerciseLog.replacement?.plannedExerciseId ??
+    null;
+
+  return (
+    exerciseLog.plannedExerciseNameSnapshot ??
+    exerciseLog.replacement?.plannedExerciseNameSnapshot ??
+    exerciseLog.plannedExerciseName ??
+    (plannedExerciseId ? exercisesById.get(plannedExerciseId)?.name : null) ??
+    null
+  );
+}
+
+function normalizeJournalExercise(data, exerciseLog, index) {
+  const name = getJournalExerciseName(data, exerciseLog);
+  const plannedExerciseId =
+    exerciseLog.plannedExerciseId ??
+    exerciseLog.replacement?.plannedExerciseId ??
+    null;
+  const plannedName = getJournalPlannedExerciseName(data, exerciseLog);
+  const isReplacement = Boolean(
+    exerciseLog.isReplacement ||
+    exerciseLog.replacement ||
+    (plannedExerciseId && exerciseLog.exerciseId && plannedExerciseId !== exerciseLog.exerciseId),
+  );
+
+  return {
+    id: exerciseLog.exerciseId ?? `exercise-${index}`,
+    name,
+    plannedExerciseId,
+    plannedName: isReplacement ? plannedName ?? "Плановое упражнение" : null,
+    isReplacement,
+    sets: (exerciseLog.sets ?? []).map(normalizeJournalSet),
+  };
+}
+
+function buildJournalSections(data, log) {
+  const sections = [];
+  const sectionsById = new Map();
+  let unknownSectionIndex = 0;
+
+  function ensureSection(muscleGroupId, source = {}) {
+    const id =
+      muscleGroupId ??
+      source.muscleGroupId ??
+      source.muscleGroup?.id ??
+      `unknown-muscle-${unknownSectionIndex++}`;
+    const fallbacks = getJournalSectionFallbacks(data, log, id, source);
+    const existing = sectionsById.get(id);
+    const hasSnapshotMuscleName = Boolean(
+      source.muscleGroupNameSnapshot ||
+        source.muscleGroup?.name ||
+        (id ? getTemplateSnapshotForMuscleGroup(log, id)?.muscleGroupNameSnapshot : null) ||
+        (id ? getMuscleGroupSnapshot(log, id)?.name : null),
+    );
+    const hasSnapshotTemplateName = Boolean(
+      source.templateNameSnapshot ||
+        source.templateName ||
+        source.exerciseTemplateName ||
+        (id ? getTemplateSnapshotForMuscleGroup(log, id)?.templateNameSnapshot : null) ||
+        (id ? getTemplateSnapshotForMuscleGroup(log, id)?.templateName : null) ||
+        (id ? getTemplateSnapshotForMuscleGroup(log, id)?.name : null),
+    );
+
+    if (existing) {
+      if (
+        (existing.muscleGroup.name === "Мышца" || hasSnapshotMuscleName) &&
+        fallbacks.muscleGroupName !== "Мышца"
+      ) {
+        existing.muscleGroup.name = fallbacks.muscleGroupName;
+      }
+
+      if (
+        (existing.templateName === "Шаблон не указан" || hasSnapshotTemplateName) &&
+        fallbacks.templateName !== "Шаблон не указан"
+      ) {
+        existing.templateName = fallbacks.templateName;
+      }
+
+      return existing;
+    }
+
+    const section = {
+      muscleGroup: {
+        id,
+        name: fallbacks.muscleGroupName,
+      },
+      templateName: fallbacks.templateName,
+      exercises: [],
+    };
+
+    sectionsById.set(id, section);
+    sections.push(section);
+    return section;
+  }
+
+  for (const muscleGroupId of log.workoutGroupSnapshot?.muscleGroupIds ?? []) {
+    ensureSection(muscleGroupId);
+  }
+
+  for (const muscleGroup of log.muscleGroupSnapshots ?? []) {
+    ensureSection(muscleGroup.id ?? muscleGroup.muscleGroupId, muscleGroup);
+  }
+
+  for (const templateSnapshot of getTemplateSnapshots(log)) {
+    ensureSection(templateSnapshot.muscleGroupId ?? templateSnapshot.muscleGroup?.id, templateSnapshot);
+  }
+
+  const muscleGroupLogs = log.muscleGroupLogs ?? [];
+  const hasNestedExerciseLogs = muscleGroupLogs.some((muscleLog) =>
+    Array.isArray(muscleLog.exerciseLogs),
+  );
+
+  for (const muscleLog of muscleGroupLogs) {
+    const section = ensureSection(muscleLog.muscleGroupId ?? muscleLog.muscleGroup?.id, muscleLog);
+
+    if (Array.isArray(muscleLog.exerciseLogs)) {
+      section.exercises.push(
+        ...dedupeExerciseLogEntries(muscleLog.exerciseLogs).map((exerciseLog, index) =>
+          normalizeJournalExercise(data, exerciseLog, index),
+        ),
+      );
+    }
+  }
+
+  if (!hasNestedExerciseLogs) {
+    const exerciseLogs = Array.isArray(log.exerciseLogs)
+      ? log.exerciseLogs
+      : dedupeExerciseLogEntries(collectExerciseLogEntries(log));
+
+    for (const exerciseLog of dedupeExerciseLogEntries(exerciseLogs)) {
+      const section = ensureSection(exerciseLog.muscleGroupId, exerciseLog);
+      section.exercises.push(normalizeJournalExercise(data, exerciseLog, section.exercises.length));
+    }
+  }
+
+  for (const section of sections) {
+    if (section.exercises.length) {
+      continue;
+    }
+
+    const snapshot = getTemplateSnapshotForMuscleGroup(log, section.muscleGroup.id);
+    const snapshotExercises = Array.isArray(snapshot?.exercises)
+      ? snapshot.exercises
+      : getExerciseNamesFromSnapshot(snapshot);
+
+    section.exercises = snapshotExercises
+      .map((exercise, index) => ({
+        id: typeof exercise === "object" ? exercise?.id ?? `snapshot-${index}` : `snapshot-${index}`,
+        name: getExerciseSnapshotName(exercise) ?? "Упражнение",
+        plannedExerciseId: null,
+        plannedName: null,
+        isReplacement: false,
+        sets: [],
+      }))
+      .filter((exercise) => exercise.name);
+  }
+
+  return sections.filter((section) => section.exercises.length || section.templateName);
+}
+
+function buildJournalEntry(data, log) {
+  const date = getWorkoutLogDate(log);
+
+  return {
+    id: log.id,
+    name: getWorkoutLogName(data, log),
+    date: date?.toISOString() ?? log.date ?? null,
+    timestamp: date?.getTime() ?? 0,
+    sections: buildJournalSections(data, log),
+  };
+}
+
+export function buildJournalEntries(data) {
+  return [...(data.workoutLogs ?? [])]
+    .map((log) => buildJournalEntry(data, log))
+    .sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export function buildJournalWorkoutDetails(data, workoutLogId) {
+  const log = (data.workoutLogs ?? []).find((item) => item.id === workoutLogId) ?? null;
+
+  return log ? buildJournalEntry(data, log) : null;
+}
+
 function getSelectedTemplateForMuscleGroup(data, workoutGroup, muscleGroupId) {
   const selectedTemplateId = workoutGroup.selectedTemplateByMuscleGroupId?.[muscleGroupId];
   const selectedTemplate = data.exerciseTemplates.find(
@@ -191,20 +487,33 @@ function getSelectedTemplateForMuscleGroup(data, workoutGroup, muscleGroupId) {
       template.muscleGroupId === muscleGroupId &&
       !template.isArchived,
   );
+  const defaultTemplate = data.exerciseTemplates.find(
+    (template) => template.muscleGroupId === muscleGroupId && template.isDefault && !template.isArchived,
+  );
+  const overrideValue = workoutGroup.selectedTemplateOverrideByMuscleGroupId?.[muscleGroupId];
+  const hasLegacyManualSelection =
+    overrideValue === undefined &&
+    selectedTemplate &&
+    !selectedTemplate.isDefault &&
+    !isProtectedTemplate(selectedTemplate);
+  const hasManualSelection = overrideValue === true || hasLegacyManualSelection;
 
-  if (selectedTemplate) {
+  if (selectedTemplate && hasManualSelection) {
     return selectedTemplate;
   }
 
   return (
-    data.exerciseTemplates.find(
-      (template) => template.muscleGroupId === muscleGroupId && template.isDefault && !template.isArchived,
-    ) ??
+    defaultTemplate ??
+    selectedTemplate ??
     data.exerciseTemplates.find(
       (template) => template.muscleGroupId === muscleGroupId && !template.isArchived,
     ) ??
     null
   );
+}
+
+export function getSelectedTemplateIdForMuscleGroup(data, workoutGroup, muscleGroupId) {
+  return getSelectedTemplateForMuscleGroup(data, workoutGroup, muscleGroupId)?.id ?? null;
 }
 
 function buildTemplateExerciseItems(data, template, exercisesById) {
@@ -396,22 +705,29 @@ export function buildWorkoutPreparationData(data, workoutGroupId) {
         date: lastWorkoutDate,
         sections: sections.map((section) => {
           const snapshot = getTemplateSnapshotForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
-          const exerciseLogs = collectExerciseLogEntries(lastWorkoutLog).filter(
-            (entry) => entry.muscleGroupId === section.muscleGroup.id,
-          );
+          const muscleGroupLog = getMuscleGroupLogForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
+          const exerciseLogs = getExerciseLogEntriesForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
           const exerciseNamesFromLogs = exerciseLogs
             .map((entry) => entry.exerciseNameSnapshot ?? entry.exerciseName ?? entry.name)
             .filter(Boolean);
           const exerciseNames = getExerciseNamesFromSnapshot(snapshot);
 
           return {
-            muscleGroup: section.muscleGroup,
+            muscleGroup: {
+              ...section.muscleGroup,
+              name:
+                muscleGroupLog?.muscleGroupNameSnapshot ??
+                snapshot?.muscleGroupNameSnapshot ??
+                snapshot?.muscleGroup?.name ??
+                section.muscleGroup.name,
+            },
             templateName:
+              muscleGroupLog?.templateNameSnapshot ??
               snapshot?.templateName ??
               snapshot?.name ??
               snapshot?.exerciseTemplateName ??
               section.template.name,
-            exerciseNames: exerciseNames.length > 0 ? exerciseNames : exerciseNamesFromLogs,
+            exerciseNames: exerciseNamesFromLogs.length > 0 ? exerciseNamesFromLogs : exerciseNames,
           };
         }),
       }

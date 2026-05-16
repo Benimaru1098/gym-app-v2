@@ -120,8 +120,10 @@ noscript {
   gap: 16px;
 }
 
-.tab-view[hidden] {
-  display: none;
+.screen-motion-frame {
+  min-height: 100%;
+  transform-origin: top center;
+  will-change: transform, opacity;
 }
 
 .home-screen {
@@ -132,12 +134,38 @@ noscript {
 .screen-header {
   display: grid;
   gap: 7px;
-  padding: 2px 2px 4px;
+  padding-bottom: 4px;
+}
+
+.screen-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.screen-title-row h1 {
+  min-width: 0;
+}
+
+.back-icon-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  margin-left: -4px;
+}
+
+.back-icon-button:active {
+  color: var(--text);
 }
 
 .screen-subtitle {
   color: var(--text-soft);
-  font-size: 14px;
+  font-size: 25px;
   line-height: 1.35;
 }
 
@@ -161,7 +189,6 @@ h2 {
   line-height: 1.18;
 }
 
-.cycle-summary,
 .panel,
 .workout-card,
 .empty-state {
@@ -171,16 +198,6 @@ h2 {
   box-shadow: var(--shadow);
 }
 
-.cycle-summary {
-  display: grid;
-  gap: 13px;
-  min-width: 0;
-  padding: 14px;
-  overflow: hidden;
-  background: var(--surface);
-}
-
-.cycle-summary-main,
 .card-topline,
 .section-title {
   display: flex;
@@ -189,44 +206,9 @@ h2 {
   gap: 12px;
 }
 
-.cycle-summary-main > div {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.summary-label,
-.cycle-summary span,
 .muted,
 .section-title small {
   color: var(--muted);
-}
-
-.summary-label {
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.cycle-summary strong {
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.08;
-}
-
-.progress-track {
-  height: 8px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: transparent;
-}
-
-.progress-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
 }
 
 .workout-list,
@@ -677,7 +659,292 @@ h2 {
   line-height: 1.35;
 }
 
+.journal-screen,
+.journal-detail-screen {
+  gap: 14px;
+}
+
+.journal-list,
+.journal-card-groups,
+.journal-template-list,
+.journal-exercise-list,
+.journal-set-list {
+  display: grid;
+}
+
+.journal-list {
+  gap: 18px;
+}
+
+.journal-card {
+  display: grid;
+  gap: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+  font: inherit;
+  text-align: left;
+}
+
+.journal-card:active {
+  border-color: var(--accent-line);
+}
+
+.journal-card-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.journal-card-date {
+  display: grid;
+  justify-items: center;
+  gap: 0;
+  min-width: 0;
+  padding-right: 14px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.journal-card-date strong {
+  color: var(--text);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 0.9;
+}
+
+.journal-card-date span {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.journal-card-title {
+  display: grid;
+  min-width: 0;
+}
+
+.journal-card-title h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-card-chevron {
+  width: 14px;
+  height: 14px;
+  border-top: 3.5px solid var(--text-soft);
+  border-right: 3.5px solid var(--text-soft);
+  transform: rotate(45deg);
+  margin-left: auto;
+  margin-right: 5px;
+}
+
+.journal-card-groups {
+  gap: 0;
+  padding: 14px 15px 15px;
+}
+
+.journal-exercise-card {
+  display: grid;
+  gap: 5px;
+}
+
+.journal-card-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.journal-card-group + .journal-card-group {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.journal-card-group strong,
+.journal-template-row strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.journal-card-group strong {
+  display: block;
+  font-size: 17px;
+  text-align: left;
+}
+
+.journal-card-template {
+  color: var(--text-soft);
+  font: inherit;
+}
+
+.journal-card-group p {
+  color: var(--text-soft);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.journal-empty-state {
+  min-height: 150px;
+}
+
+.journal-detail-group {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.journal-detail-group + .journal-detail-group {
+  margin-bottom: 0px;
+}
+
+.journal-muscle-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.journal-muscle-header h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-section-template {
+  color: var(--text-soft);
+  font-size: 20px;
+  font-weight: 500;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-template-list {
+  gap: 8px;
+}
+
+.journal-template-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.journal-template-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 14px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-exercise-list {
+  gap: 14px;
+}
+
+.journal-exercise-card {
+  gap: 16px;
+  padding: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.journal-exercise-card h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 17px;
+}
+
+.journal-replacement-divider {
+  color: var(--muted);
+}
+
+.journal-replacement-note {
+  color: var(--text-soft);
+  font: inherit;
+}
+
+.journal-empty-sets {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.35;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-3);
+  padding: 13px;
+  font-weight: 500;
+}
+
+.journal-set-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.journal-set-list li {
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.journal-set-list span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.journal-set-list strong {
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.05;
+}
+
 .active-workout-screen {
+  gap: 14px;
+}
+
+.active-exercise-motion {
+  display: grid;
   gap: 14px;
 }
 
@@ -875,7 +1142,7 @@ h2 {
   justify-content: flex-start;
   gap: 12px;
   min-height: 50px;
-  padding: 10px 12px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-3);
@@ -909,7 +1176,7 @@ h2 {
   justify-content: flex-start;
   gap: 10px;
   min-height: 68px;
-  padding: 12px 14px 12px 12px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-3);
@@ -957,17 +1224,6 @@ h2 {
   stroke-width: 2px;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
-}
-
-.back-button {
-  justify-self: start;
-  min-height: 36px;
-  padding: 7px 11px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  font-weight: 500;
 }
 
 .template-list {
@@ -1057,6 +1313,17 @@ h2 {
   color: var(--text);
 }
 
+.form-warning {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.35;
+  padding: 12px 13px;
+}
+
 .template-exercise-list {
   display: grid;
   gap: 7px;
@@ -1127,6 +1394,19 @@ h2 {
   gap: 0px;
   min-height: 50px;
   padding: 8px 7px 8px 9px;
+}
+
+.template-selected-item.is-entering {
+  animation: template-selected-enter 170ms ease-out;
+}
+
+.template-selected-item.is-removing {
+  animation: template-selected-remove 170ms ease-in forwards;
+  pointer-events: none;
+}
+
+.template-builder-scroll.is-dragging-list .template-selected-item:not(.is-dragging) {
+  will-change: transform;
 }
 
 .template-selected-item.is-dragging {
@@ -1237,6 +1517,9 @@ h2 {
   justify-content: space-between;
   color: var(--text);
   text-align: left;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
 }
 
 .template-base-exercise-button.is-selected {
@@ -1252,6 +1535,12 @@ h2 {
   color: var(--muted);
   font-size: 14px;
   font-weight: 500;
+  opacity: 0;
+  transition: opacity 170ms ease;
+}
+
+.template-base-status.is-visible {
+  opacity: 1;
 }
 
 .template-choice-row {
@@ -1349,6 +1638,13 @@ h2 {
   max-width: 270px;
   color: var(--text);
   font-size: 18px;
+}
+
+.empty-state p {
+  max-width: 290px;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.35;
 }
 
 .error-state p {
@@ -1449,13 +1745,27 @@ h2 {
   padding: 8px;
   border: 1px solid var(--line-strong);
   border-radius: 24px;
-  background: var(--nav);
+  background: rgba(25, 25, 25, 0.80);
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.38);
   backdrop-filter: blur(18px);
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.nav-active-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 18px;
+  background: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+  will-change: transform;
 }
 
 .nav-button {
   position: relative;
+  z-index: 1;
   display: grid;
   place-items: center;
   min-width: 0;
@@ -1466,28 +1776,25 @@ h2 {
   color: var(--text-soft);
 }
 
+.nav-icon-layer {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+}
+
 .nav-button svg {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
 }
 
 .nav-button.is-active {
-  background: var(--surface);
-  color: var(--accent);
-}
-
-.nav-button.is-active::after {
-  position: absolute;
-  bottom: 7px;
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: currentColor;
-  content: "";
+  color: var(--text);
 }
 
 .nav-button:focus-visible,
-.back-button:focus-visible,
+.back-icon-button:focus-visible,
+.journal-card:focus-visible,
 .workout-card-button:focus-visible,
 .prep-template-select:focus-visible,
 .template-select-option:focus-visible,
@@ -1496,6 +1803,30 @@ h2 {
 .action-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
+}
+
+@keyframes template-selected-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes template-selected-remove {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
 }
 
 @keyframes spin {

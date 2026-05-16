@@ -326,8 +326,6 @@ export const initialData = {
     {
       id: "cycle-default",
       workoutGroupIds: ["wg-chest-biceps", "wg-back-triceps", "wg-legs-shoulders"],
-      currentIndex: 0,
-      completedWorkoutGroupIdsInCurrentRound: [],
     },
   ],
   workoutLogs: [],
