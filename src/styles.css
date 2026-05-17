@@ -792,10 +792,10 @@ h2 {
 .journal-detail-group {
   display: grid;
   gap: 14px;
-  margin-bottom: 20px;
+  margin-bottom: 15px;
 }
 
-.journal-detail-group + .journal-detail-group {
+.journal-detail-group:last-child {
   margin-bottom: 0px;
 }
 
