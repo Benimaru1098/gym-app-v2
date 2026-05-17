@@ -47,6 +47,7 @@ const TABS = [
 ];
 
 const WORKOUT_IMAGES = [gym1Src, gym2Src, gym3Src];
+const workoutImagePreloadCache = new Map();
 const HISTORY_TAG = "gym-app-react";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
 const TEMPLATE_DRAG_MAX_SCROLL_STEP = 18;
@@ -88,6 +89,22 @@ const secondaryScreenTransition = {
 };
 
 const TEMPLATE_EXERCISE_ANIMATION_MS = 170;
+
+function preloadWorkoutImages() {
+  WORKOUT_IMAGES.forEach((source) => {
+    if (!source || workoutImagePreloadCache.has(source)) {
+      return;
+    }
+
+    const image = new Image();
+    image.decoding = "async";
+    image.loading = "eager";
+    image.fetchPriority = "high";
+    image.src = source;
+    image.decode?.().catch(() => {});
+    workoutImagePreloadCache.set(source, image);
+  });
+}
 
 function createInitialState() {
   return {
@@ -1010,10 +1027,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    WORKOUT_IMAGES.forEach((source) => {
-      const image = new Image();
-      image.src = source;
-    });
+    preloadWorkoutImages();
   }, []);
 
   useEffect(() => {
@@ -1216,7 +1230,6 @@ function App() {
         await saveWorkoutGroupSelectedTemplate(selector.workoutGroupId, selector.muscleGroupId, templateId);
         await refreshData();
         patchState({ templateSelector: null });
-        showNotice("Шаблон выбран");
       } catch (error) {
         console.error(error);
         showNotice("Не удалось выбрать шаблон", "error");
@@ -1497,7 +1510,6 @@ function App() {
       }), { showError: true });
 
       patchState({ activeExerciseReplacement: null });
-      showNotice("Упражнение заменено");
     },
     [patchState, showNotice, updateActiveWorkoutSession],
   );
@@ -2148,14 +2160,24 @@ function InstallButton({ activeTab, canInstall, isStandalone, onInstall }) {
 }
 
 function Notice({ notice }) {
-  if (!notice) {
-    return null;
-  }
+  const shouldReduceMotion = useReducedMotion();
 
   return (
-    <div className={`notice notice-${notice.type}`} role="status">
-      {notice.message}
-    </div>
+    <AnimatePresence>
+      {notice ? (
+        <motion.div
+          key={`${notice.type}-${notice.message}`}
+          className={`notice notice-${notice.type}`}
+          role="status"
+          initial={shouldReduceMotion ? false : { opacity: 0, y: 18, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={shouldReduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
+          transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {notice.message}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   );
 }
 
@@ -2262,7 +2284,18 @@ function WorkoutCard({ card, illustrationIndex, imageSrc, onOpen }) {
         <span className={`workout-last-label${card.lastWorkoutDate ? "" : " is-empty"}`}>{lastDoneLabel}</span>
       </div>
 
-      {imageSrc ? <img className="workout-card-image" src={imageSrc} alt="" aria-hidden="true" /> : null}
+      {imageSrc ? (
+        <img
+          className="workout-card-image"
+          src={imageSrc}
+          alt=""
+          aria-hidden="true"
+          loading="eager"
+          decoding="sync"
+          fetchPriority="high"
+          draggable="false"
+        />
+      ) : null}
     </button>
   );
 }

@@ -1,4 +1,5 @@
-const CACHE_NAME = "gym-cycle-vite-v2";
+const CACHE_NAME = "gym-cycle-vite-v3";
+const STATIC_ASSET_DESTINATIONS = new Set(["image", "font", "script", "style"]);
 
 const CORE_ASSETS = [
   "./",
@@ -33,17 +34,31 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const responseClone = response.clone();
-
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
-
-        return response;
-      })
-      .catch(() => caches.match(event.request)),
-  );
+  event.respondWith(STATIC_ASSET_DESTINATIONS.has(event.request.destination) ? cacheFirst(event.request) : networkFirst(event.request));
 });
+
+function cacheFirst(request) {
+  return caches.match(request).then((cachedResponse) => {
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+
+    return fetchAndCache(request);
+  });
+}
+
+function networkFirst(request) {
+  return fetchAndCache(request).catch(() => caches.match(request));
+}
+
+function fetchAndCache(request) {
+  return fetch(request).then((response) => {
+    if (response && response.ok) {
+      caches.open(CACHE_NAME).then((cache) => {
+        cache.put(request, response.clone());
+      });
+    }
+
+    return response;
+  });
+}
