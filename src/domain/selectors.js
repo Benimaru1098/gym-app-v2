@@ -1,5 +1,8 @@
 import { isProtectedTemplate } from "./templateRules.js";
 
+export const FREE_WORKOUT_GROUP_ID = "free-full-body";
+export const FREE_WORKOUT_NAME = "Всё Тело";
+
 export function indexById(items) {
   return new Map(items.map((item) => [item.id, item]));
 }
@@ -534,10 +537,18 @@ function buildTemplateExerciseItems(data, template, exercisesById) {
   });
 }
 
-function createInitialActiveSetRows(previousSets) {
+function getDefaultSetCountForMuscleGroup(muscleGroupId) {
+  return muscleGroupId === "biceps" || muscleGroupId === "triceps" ? 3 : 4;
+}
+
+function createInitialActiveSetRows(previousSets, muscleGroupId) {
   const sourceSets = previousSets.length
     ? previousSets
-    : Array.from({ length: 4 }, (_, index) => ({ setNumber: index + 1, weightKg: "", reps: "" }));
+    : Array.from({ length: getDefaultSetCountForMuscleGroup(muscleGroupId) }, (_, index) => ({
+        setNumber: index + 1,
+        weightKg: "",
+        reps: "",
+      }));
 
   return sourceSets.map((set, index) => ({
     setNumber: index + 1,
@@ -610,7 +621,7 @@ export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, 
         trackingType: exercise.trackingType,
         previousSets,
         replacement: null,
-        sets: createInitialActiveSetRows(previousSets),
+        sets: createInitialActiveSetRows(previousSets, muscleGroupId),
       });
     }
   }
@@ -629,6 +640,91 @@ export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, 
     },
     muscleGroupSnapshots,
     templateSnapshots,
+    exerciseLogs,
+  };
+}
+
+export function buildFreeWorkoutCard(data) {
+  const workoutGroup = {
+    id: FREE_WORKOUT_GROUP_ID,
+    name: FREE_WORKOUT_NAME,
+  };
+
+  return {
+    workoutGroup,
+    lastWorkoutDate: getLastWorkoutDateForGroup(data, workoutGroup)?.toISOString() ?? null,
+  };
+}
+
+export function buildFreeWorkoutSessionDraft(data, selectedExerciseIds, sessionId, startedAt) {
+  const muscleGroupsById = indexById(data.muscleGroups);
+  const exercisesById = indexById(data.exercises);
+  const muscleGroupIds = [];
+  const muscleGroupSnapshots = [];
+  const exerciseLogs = [];
+  const usedExerciseIds = new Set();
+
+  for (const exerciseId of selectedExerciseIds ?? []) {
+    if (usedExerciseIds.has(exerciseId)) {
+      continue;
+    }
+
+    const exercise = exercisesById.get(exerciseId);
+
+    if (!exercise || exercise.isArchived) {
+      continue;
+    }
+
+    const muscleGroup = muscleGroupsById.get(exercise.muscleGroupId);
+
+    if (!muscleGroup) {
+      continue;
+    }
+
+    usedExerciseIds.add(exercise.id);
+
+    if (!muscleGroupIds.includes(muscleGroup.id)) {
+      muscleGroupIds.push(muscleGroup.id);
+      muscleGroupSnapshots.push({
+        id: muscleGroup.id,
+        name: muscleGroup.name,
+        sortOrder: muscleGroup.sortOrder,
+      });
+    }
+
+    const previousSets = getLastSetsForExercise(data, exercise.id);
+
+    exerciseLogs.push({
+      exerciseId: exercise.id,
+      exerciseNameSnapshot: exercise.name,
+      plannedExerciseId: exercise.id,
+      plannedExerciseNameSnapshot: exercise.name,
+      muscleGroupId: muscleGroup.id,
+      muscleGroupNameSnapshot: muscleGroup.name,
+      templateId: null,
+      templateNameSnapshot: null,
+      trackingType: exercise.trackingType ?? "weight_reps",
+      previousSets,
+      replacement: null,
+      sets: createInitialActiveSetRows(previousSets, muscleGroup.id),
+    });
+  }
+
+  return {
+    id: sessionId,
+    status: "active",
+    type: "free",
+    workoutGroupId: FREE_WORKOUT_GROUP_ID,
+    startedAt,
+    updatedAt: startedAt,
+    currentExerciseIndex: 0,
+    workoutGroupSnapshot: {
+      id: FREE_WORKOUT_GROUP_ID,
+      name: FREE_WORKOUT_NAME,
+      muscleGroupIds,
+    },
+    muscleGroupSnapshots,
+    templateSnapshots: [],
     exerciseLogs,
   };
 }

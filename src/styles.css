@@ -216,27 +216,13 @@ h2 {
 .plan-summary-grid,
 .action-grid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .home-workout-list {
   flex: 1;
-  grid-template-rows: repeat(3, minmax(108px, 1fr));
-  min-height: 320px;
-}
-
-.home-section-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 2px 0;
-}
-
-.home-section-title span {
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 500;
+  grid-template-rows: repeat(4, minmax(108px, 1fr));
+  min-height: 468px;
 }
 
 .workout-card {
@@ -949,7 +935,7 @@ h2 {
 }
 
 .active-workout-header h1 {
-  font-size: 24px;
+  font-size: 22px;
 }
 
 .active-exercise-title {
@@ -1341,6 +1327,34 @@ h2 {
   gap: 10px;
 }
 
+.muscle-chip-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.muscle-chip-button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-size: 14px;
+  font-weight: 500;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.muscle-chip-button.is-selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text);
+}
+
 .icon-wrap {
   display: contents;
 }
@@ -1486,6 +1500,23 @@ h2 {
   flex: 1 1 auto;
 }
 
+.free-workout-selected-item .template-selected-name {
+  margin-right: 8px;
+}
+
+.template-selected-meta {
+  flex: 0 1 auto;
+  max-width: 34%;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 500;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 5px;
+}
+
 .template-selected-item.is-missing .template-selected-name {
   color: var(--danger);
 }
@@ -1557,6 +1588,7 @@ h2 {
 }
 
 .template-choice-box {
+  position: relative;
   display: grid;
   place-items: center;
   flex: 0 0 22px;
@@ -1565,6 +1597,21 @@ h2 {
   border: 2px solid var(--line-strong);
   border-radius: 6px;
   background: var(--surface);
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.template-choice-box::after {
+  position: absolute;
+  width: 8px;
+  height: 4px;
+  border-bottom: 2px solid var(--text);
+  border-left: 2px solid var(--text);
+  content: "";
+  opacity: 0;
+  transform: rotate(-45deg) translateY(-1px);
+  transition: opacity 160ms ease;
 }
 
 .template-choice-input:checked + .template-choice-box {
@@ -1573,12 +1620,7 @@ h2 {
 }
 
 .template-choice-input:checked + .template-choice-box::after {
-  width: 8px;
-  height: 4px;
-  border-bottom: 2px solid var(--text);
-  border-left: 2px solid var(--text);
-  content: "";
-  transform: rotate(-45deg) translateY(-1px);
+  opacity: 1;
 }
 
 .template-choice-name {

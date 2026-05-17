@@ -15,12 +15,16 @@ import {
 } from "./data/storage.js";
 import { TRACKING_TYPES } from "./data/seed.js";
 import {
+  FREE_WORKOUT_GROUP_ID,
+  FREE_WORKOUT_NAME,
   buildActiveWorkoutSessionDraft,
   buildCycleItems,
   buildExerciseCreationData,
   buildExerciseEditingData,
   buildExerciseSummariesByMuscleGroup,
   buildExercisesForMuscleGroup,
+  buildFreeWorkoutCard,
+  buildFreeWorkoutSessionDraft,
   buildJournalEntries,
   buildJournalWorkoutDetails,
   buildTemplateCreationData,
@@ -31,6 +35,7 @@ import {
   buildWorkoutPreparationData,
   getLastSetsForExercise,
   getSelectedTemplateIdForMuscleGroup,
+  indexById,
 } from "./domain/selectors.js";
 import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
 import { icon } from "./ui/icons.js";
@@ -38,6 +43,7 @@ import editIconSrc from "./assets/icons/edit.svg";
 import gym1Src from "./assets/illustrations/gym1.svg";
 import gym2Src from "./assets/illustrations/gym2.svg";
 import gym3Src from "./assets/illustrations/gym3.svg";
+import gym4Src from "./assets/illustrations/gym4.svg";
 import "./styles.css";
 
 const TABS = [
@@ -46,7 +52,7 @@ const TABS = [
   { id: "journal", label: "Журнал", icon: "journal" },
 ];
 
-const WORKOUT_IMAGES = [gym1Src, gym2Src, gym3Src];
+const WORKOUT_IMAGES = [gym1Src, gym2Src, gym3Src, gym4Src];
 const workoutImagePreloadCache = new Map();
 const HISTORY_TAG = "gym-app-react";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
@@ -115,6 +121,7 @@ function createInitialState() {
     data: null,
     error: null,
     exerciseDraft: { name: "" },
+    freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     homeView: { name: "overview", workoutGroupId: null },
     isLoading: true,
     isStandalone:
@@ -129,6 +136,10 @@ function createInitialState() {
 }
 
 function normalizeHomeView(view) {
+  if (view?.name === "freePreparation") {
+    return { name: "freePreparation", workoutGroupId: FREE_WORKOUT_GROUP_ID };
+  }
+
   if (view?.name === "preparation") {
     return { name: "preparation", workoutGroupId: view.workoutGroupId };
   }
@@ -249,12 +260,20 @@ function getPlanBackTarget(planView) {
 function getLocalBackTarget(appState) {
   if (appState.activeTab === "home" && appState.homeView.name === "activeWorkout") {
     const session = getActiveWorkoutSessionFromState(appState);
+    const workoutGroupId = session?.workoutGroupId ?? appState.homeView.workoutGroupId;
+
+    if (session?.type === "free" || workoutGroupId === FREE_WORKOUT_GROUP_ID) {
+      return {
+        activeTab: "home",
+        homeView: { name: "freePreparation" },
+      };
+    }
 
     return {
       activeTab: "home",
       homeView: {
         name: "preparation",
-        workoutGroupId: session?.workoutGroupId ?? appState.homeView.workoutGroupId,
+        workoutGroupId,
       },
     };
   }
@@ -455,10 +474,18 @@ function renumberSetRows(sets) {
   }));
 }
 
-function createActiveSetRowsFromPrevious(previousSets) {
+function getDefaultSetCountForMuscleGroup(muscleGroupId) {
+  return muscleGroupId === "biceps" || muscleGroupId === "triceps" ? 3 : 4;
+}
+
+function createActiveSetRowsFromPrevious(previousSets, muscleGroupId) {
   const sourceSets = previousSets.length
     ? previousSets
-    : Array.from({ length: 4 }, (_, index) => ({ setNumber: index + 1, weightKg: "", reps: "" }));
+    : Array.from({ length: getDefaultSetCountForMuscleGroup(muscleGroupId) }, (_, index) => ({
+        setNumber: index + 1,
+        weightKg: "",
+        reps: "",
+      }));
 
   return sourceSets.map((set, index) => ({
     setNumber: index + 1,
@@ -1068,10 +1095,11 @@ function App() {
       const selectedExerciseIds = Array.from(drag.list.querySelectorAll("[data-selected-exercise-item]"))
         .map((item) => item.dataset.exerciseId)
         .filter(Boolean);
+      const draftKind = drag.list.dataset.draftKind || "template";
 
       patchState((current) => ({
-        templateDraft: {
-          ...current.templateDraft,
+        [draftKind === "free" ? "freeWorkoutDraft" : "templateDraft"]: {
+          ...(draftKind === "free" ? current.freeWorkoutDraft : current.templateDraft),
           selectedExerciseIds,
         },
       }));
@@ -1134,6 +1162,17 @@ function App() {
   const openWorkoutPreparation = useCallback(
     (workoutGroupId) => {
       navigate({ activeTab: "home", homeView: { name: "preparation", workoutGroupId } });
+    },
+    [navigate],
+  );
+
+  const openFreeWorkoutPreparation = useCallback(
+    () => {
+      navigate({
+        activeTab: "home",
+        freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
+        homeView: { name: "freePreparation" },
+      });
     },
     [navigate],
   );
@@ -1342,6 +1381,62 @@ function App() {
     [navigate, refreshData, showNotice],
   );
 
+  const handleStartFreeWorkout = useCallback(
+    async () => {
+      const current = stateRef.current;
+      const selectedExerciseIds = current.freeWorkoutDraft.selectedExerciseIds;
+
+      if (!selectedExerciseIds.length) {
+        showNotice("Выбери хотя бы одно упражнение", "error");
+        return;
+      }
+
+      const unfinishedSession = getActiveWorkoutSessionForGroup(current, FREE_WORKOUT_GROUP_ID);
+
+      if (unfinishedSession && !window.confirm("Начать новую тренировку? Прошлая незавершённая тренировка будет удалена.")) {
+        return;
+      }
+
+      const startedAt = new Date().toISOString();
+      const session = buildFreeWorkoutSessionDraft(
+        current.data,
+        selectedExerciseIds,
+        createId("active-workout"),
+        startedAt,
+      );
+
+      if (!session.exerciseLogs.length) {
+        showNotice("Выбери хотя бы одно упражнение", "error");
+        return;
+      }
+
+      try {
+        if (unfinishedSession) {
+          await activeWorkoutSaveQueueRef.current.catch(() => {});
+          await deleteActiveWorkoutSessionsForWorkoutGroup(FREE_WORKOUT_GROUP_ID);
+        }
+
+        await saveActiveWorkoutSession(session);
+        const refreshedData = await refreshData();
+        navigate(
+          {
+            activeTab: "home",
+            activeWorkoutSession: session,
+            activeExerciseReplacement: null,
+            data: refreshedData,
+            homeView: { name: "activeWorkout", sessionId: session.id, workoutGroupId: FREE_WORKOUT_GROUP_ID },
+          },
+          { history: "push", scroll: "top" },
+        );
+        showNotice("Тренировка начата");
+      } catch (error) {
+        console.error(error);
+        showNotice("Не удалось начать тренировку", "error");
+      }
+    },
+    [navigate, refreshData, showNotice],
+  );
+
   const handleContinueWorkout = useCallback(
     (sessionId) => {
       const current = stateRef.current;
@@ -1504,7 +1599,7 @@ function App() {
                   replacedAt: new Date().toISOString(),
                 }
               : null,
-            sets: createActiveSetRowsFromPrevious(previousSets),
+            sets: createActiveSetRowsFromPrevious(previousSets, exercise.muscleGroupId),
           };
         }),
       }), { showError: true });
@@ -1627,6 +1722,58 @@ function App() {
       templateDraft: {
         ...current.templateDraft,
         selectedExerciseIds: current.templateDraft.selectedExerciseIds.filter((id) => id !== exerciseId),
+      },
+    }));
+  }, [patchState]);
+
+  const toggleFreeWorkoutMuscleGroup = useCallback((muscleGroupId) => {
+    patchState((current) => {
+      const isSelected = current.freeWorkoutDraft.selectedMuscleGroupIds.includes(muscleGroupId);
+      const selectedMuscleGroupIds = isSelected
+        ? current.freeWorkoutDraft.selectedMuscleGroupIds.filter((id) => id !== muscleGroupId)
+        : [...current.freeWorkoutDraft.selectedMuscleGroupIds, muscleGroupId];
+      const selectedExerciseIds = isSelected
+        ? current.freeWorkoutDraft.selectedExerciseIds.filter((exerciseId) => {
+            const exercise = current.data?.exercises?.find((item) => item.id === exerciseId);
+            return exercise?.muscleGroupId !== muscleGroupId;
+          })
+        : current.freeWorkoutDraft.selectedExerciseIds;
+
+      return {
+        freeWorkoutDraft: {
+          selectedMuscleGroupIds,
+          selectedExerciseIds,
+        },
+      };
+    });
+  }, [patchState]);
+
+  const addFreeWorkoutExercise = useCallback((exerciseId) => {
+    patchState((current) => {
+      if (current.freeWorkoutDraft.selectedExerciseIds.includes(exerciseId)) {
+        return {};
+      }
+
+      const exercise = current.data?.exercises?.find((item) => item.id === exerciseId && !item.isArchived);
+      const selectedMuscleGroupIds =
+        exercise && !current.freeWorkoutDraft.selectedMuscleGroupIds.includes(exercise.muscleGroupId)
+          ? [...current.freeWorkoutDraft.selectedMuscleGroupIds, exercise.muscleGroupId]
+          : current.freeWorkoutDraft.selectedMuscleGroupIds;
+
+      return {
+        freeWorkoutDraft: {
+          selectedMuscleGroupIds,
+          selectedExerciseIds: [...current.freeWorkoutDraft.selectedExerciseIds, exerciseId],
+        },
+      };
+    });
+  }, [patchState]);
+
+  const removeFreeWorkoutExercise = useCallback((exerciseId) => {
+    patchState((current) => ({
+      freeWorkoutDraft: {
+        ...current.freeWorkoutDraft,
+        selectedExerciseIds: current.freeWorkoutDraft.selectedExerciseIds.filter((id) => id !== exerciseId),
       },
     }));
   }, [patchState]);
@@ -1891,6 +2038,7 @@ function App() {
           <HomeView
             data={state.data}
             homeView={state.homeView}
+            freeWorkoutDraft={state.freeWorkoutDraft}
             activeWorkoutSession={state.activeWorkoutSession}
             onBack={goBack}
             onAddActiveSet={handleAddActiveSet}
@@ -1900,9 +2048,15 @@ function App() {
             onActivePreviousExercise={handleActivePreviousExercise}
             onActiveNextExercise={handleActiveNextExercise}
             onFinishActiveWorkout={handleFinishActiveWorkout}
+            onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
             onOpenWorkoutPreparation={openWorkoutPreparation}
             onOpenTemplateSelector={openTemplateSelector}
+            onToggleFreeWorkoutMuscleGroup={toggleFreeWorkoutMuscleGroup}
+            onAddFreeWorkoutExercise={addFreeWorkoutExercise}
+            onRemoveFreeWorkoutExercise={removeFreeWorkoutExercise}
+            onTemplateDragStart={handleTemplateDragStart}
             onStartWorkout={handleStartWorkout}
+            onStartFreeWorkout={handleStartFreeWorkout}
             onContinueWorkout={handleContinueWorkout}
             onOpenFullWorkout={openJournalWorkout}
           />
@@ -1963,6 +2117,7 @@ function App() {
     );
   }, [
     addDraftExercise,
+    addFreeWorkoutExercise,
     goBack,
     handleActiveNextExercise,
     handleActivePreviousExercise,
@@ -1982,10 +2137,13 @@ function App() {
     handleTemplateDefaultChange,
     handleTemplateDragStart,
     handleTemplateNameChange,
+    handleStartFreeWorkout,
+    handleStartWorkout,
     openExerciseCreate,
     openExerciseEdit,
     openExerciseGroup,
     openExerciseReplacement,
+    openFreeWorkoutPreparation,
     openJournalWorkout,
     openTemplateCreate,
     openTemplateEdit,
@@ -1993,13 +2151,15 @@ function App() {
     openTemplateSelector,
     openWorkoutPreparation,
     removeDraftExercise,
-    handleStartWorkout,
+    removeFreeWorkoutExercise,
     shouldReduceMotion,
+    toggleFreeWorkoutMuscleGroup,
     state.activeTab,
     state.activeWorkoutSession,
     state.data,
     state.error,
     state.exerciseDraft,
+    state.freeWorkoutDraft,
     state.homeView,
     state.isLoading,
     state.journalView,
@@ -2184,6 +2344,7 @@ function Notice({ notice }) {
 function HomeView({
   data,
   homeView,
+  freeWorkoutDraft,
   activeWorkoutSession,
   onBack,
   onAddActiveSet,
@@ -2193,9 +2354,15 @@ function HomeView({
   onActivePreviousExercise,
   onActiveNextExercise,
   onFinishActiveWorkout,
+  onOpenFreeWorkoutPreparation,
   onOpenWorkoutPreparation,
   onOpenTemplateSelector,
+  onToggleFreeWorkoutMuscleGroup,
+  onAddFreeWorkoutExercise,
+  onRemoveFreeWorkoutExercise,
+  onTemplateDragStart,
   onStartWorkout,
+  onStartFreeWorkout,
   onContinueWorkout,
   onOpenFullWorkout,
 }) {
@@ -2235,16 +2402,30 @@ function HomeView({
     );
   }
 
+  if (homeView.name === "freePreparation") {
+    return (
+      <FreeWorkoutPreparationScreen
+        data={data}
+        draft={freeWorkoutDraft}
+        activeWorkoutSession={activeWorkoutSession}
+        onBack={onBack}
+        onToggleMuscleGroup={onToggleFreeWorkoutMuscleGroup}
+        onAddExercise={onAddFreeWorkoutExercise}
+        onRemoveExercise={onRemoveFreeWorkoutExercise}
+        onDragStart={onTemplateDragStart}
+        onStartWorkout={onStartFreeWorkout}
+        onContinueWorkout={onContinueWorkout}
+      />
+    );
+  }
+
   const workoutCards = buildWorkoutGroupCards(data);
+  const freeWorkoutCard = buildFreeWorkoutCard(data);
   return (
     <section className="screen home-screen">
       <header className="screen-header">
         <h1>Главная</h1>
       </header>
-
-      <div className="home-section-title">
-        <span>Выбери тренировку для старта</span>
-      </div>
 
       <div className="workout-list home-workout-list">
         {workoutCards.map((card, index) => (
@@ -2256,13 +2437,22 @@ function HomeView({
             onOpen={() => onOpenWorkoutPreparation(card.workoutGroup.id)}
           />
         ))}
+        <WorkoutCard
+          card={freeWorkoutCard}
+          illustrationIndex={4}
+          imageSrc={gym4Src}
+          onOpen={onOpenFreeWorkoutPreparation}
+        />
       </div>
     </section>
   );
 }
 
 function WorkoutCard({ card, illustrationIndex, imageSrc, onOpen }) {
-  const nameParts = card.workoutGroup.name.split("+").map((part) => part.trim()).filter(Boolean);
+  const nameParts =
+    card.workoutGroup.id === FREE_WORKOUT_GROUP_ID
+      ? ["Всё", "Тело"]
+      : card.workoutGroup.name.split("+").map((part) => part.trim()).filter(Boolean);
   const lastDoneLabel = formatLastWorkoutLabel(card.lastWorkoutDate);
 
   return (
@@ -2402,6 +2592,291 @@ function WorkoutPreparationScreen({
 
       <PreviousWorkoutBlock workout={details.previousWorkout} onOpenFullWorkout={onOpenFullWorkout} />
     </section>
+  );
+}
+
+function FreeWorkoutPreparationScreen({
+  data,
+  draft,
+  activeWorkoutSession,
+  onBack,
+  onToggleMuscleGroup,
+  onAddExercise,
+  onRemoveExercise,
+  onDragStart,
+  onStartWorkout,
+  onContinueWorkout,
+}) {
+  const muscleGroups = [...(data.muscleGroups ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+  const selectedMuscleGroupIds = draft.selectedMuscleGroupIds ?? [];
+  const selectedExerciseIds = draft.selectedExerciseIds ?? [];
+  const selectedMuscleGroupSet = new Set(selectedMuscleGroupIds);
+  const selectedExerciseSet = new Set(selectedExerciseIds);
+  const muscleGroupsById = indexById(muscleGroups);
+  const exercisesById = indexById(data.exercises ?? []);
+  const freeWorkoutCard = buildFreeWorkoutCard(data);
+  const unfinishedSession = getActiveWorkoutSessionForGroup(
+    { data, activeWorkoutSession },
+    FREE_WORKOUT_GROUP_ID,
+  );
+  const selectedExercises = selectedExerciseIds.map((exerciseId) => {
+    const exercise = exercisesById.get(exerciseId);
+    const muscleGroup = exercise ? muscleGroupsById.get(exercise.muscleGroupId) : null;
+
+    return {
+      id: exerciseId,
+      name: exercise && !exercise.isArchived ? exercise.name : "Упражнение не найдено",
+      muscleGroupName: muscleGroup?.name ?? "Мышца",
+      isMissing: !exercise || Boolean(exercise.isArchived),
+    };
+  });
+  const baseSections = selectedMuscleGroupIds
+    .map((muscleGroupId) => muscleGroupsById.get(muscleGroupId))
+    .filter(Boolean)
+    .map((muscleGroup) => ({
+      muscleGroup,
+      exercises: (data.exercises ?? []).filter(
+        (exercise) => exercise.muscleGroupId === muscleGroup.id && !exercise.isArchived,
+      ),
+    }));
+
+  return (
+    <section className="screen workout-prep-screen free-workout-prep-screen">
+      <header className="screen-header">
+        <ScreenTitle onBack={onBack}>{FREE_WORKOUT_NAME}</ScreenTitle>
+        <p className="screen-subtitle">Последний раз: {formatRelativeDate(freeWorkoutCard.lastWorkoutDate)}</p>
+      </header>
+
+      <section className="panel plan-section">
+        <div className="section-title">
+          <span>Группы мышц</span>
+        </div>
+        <div className="muscle-chip-list">
+          {muscleGroups.map((muscleGroup) => {
+            const isSelected = selectedMuscleGroupSet.has(muscleGroup.id);
+
+            return (
+              <button
+                key={muscleGroup.id}
+                className={`muscle-chip-button${isSelected ? " is-selected" : ""}`}
+                type="button"
+                aria-pressed={isSelected}
+                onClick={() => onToggleMuscleGroup(muscleGroup.id)}
+              >
+                {muscleGroup.name}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <FreeWorkoutExerciseBuilder
+        baseSections={baseSections}
+        hasSelectedMuscleGroups={selectedMuscleGroupIds.length > 0}
+        selectedExerciseIds={selectedExerciseIds}
+        selectedExerciseSet={selectedExerciseSet}
+        selectedExercises={selectedExercises}
+        onAddExercise={onAddExercise}
+        onRemoveExercise={onRemoveExercise}
+        onDragStart={onDragStart}
+      />
+
+      <div className="prep-workout-actions">
+        <button
+          className={`action-button${unfinishedSession ? " secondary-action" : ""}`}
+          type="button"
+          disabled={!selectedExerciseIds.length}
+          onClick={onStartWorkout}
+        >
+          <span>{unfinishedSession ? "Новая тренировка" : "Начать тренировку"}</span>
+        </button>
+        {unfinishedSession ? (
+          <button className="action-button" type="button" onClick={() => onContinueWorkout(unfinishedSession.id)}>
+            <span>Продолжить тренировку</span>
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function FreeWorkoutExerciseBuilder({
+  baseSections,
+  hasSelectedMuscleGroups,
+  selectedExerciseIds,
+  selectedExerciseSet,
+  selectedExercises,
+  onAddExercise,
+  onRemoveExercise,
+  onDragStart,
+}) {
+  const shouldReduceMotion = useReducedMotion();
+  const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState(null);
+  const [removingExerciseIds, setRemovingExerciseIds] = useState(() => new Set());
+  const addAnimationTimerRef = useRef(null);
+  const removeAnimationTimersRef = useRef(new Map());
+  const baseSectionTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
+  const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения выше" : "Выбери группы мышц";
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(addAnimationTimerRef.current);
+      removeAnimationTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      removeAnimationTimersRef.current.clear();
+    };
+  }, []);
+
+  const runAddExercise = useCallback(
+    (exerciseId) => {
+      window.clearTimeout(addAnimationTimerRef.current);
+      setRecentlyAddedExerciseId(exerciseId);
+      addAnimationTimerRef.current = window.setTimeout(() => {
+        setRecentlyAddedExerciseId(null);
+      }, TEMPLATE_EXERCISE_ANIMATION_MS);
+      onAddExercise(exerciseId);
+    },
+    [onAddExercise],
+  );
+
+  const runRemoveExercise = useCallback(
+    (exerciseId) => {
+      if (removeAnimationTimersRef.current.has(exerciseId)) {
+        return;
+      }
+
+      setRemovingExerciseIds((current) => {
+        const next = new Set(current);
+        next.add(exerciseId);
+        return next;
+      });
+
+      const timerId = window.setTimeout(() => {
+        onRemoveExercise(exerciseId);
+        removeAnimationTimersRef.current.delete(exerciseId);
+        setRemovingExerciseIds((current) => {
+          const next = new Set(current);
+          next.delete(exerciseId);
+          return next;
+        });
+      }, TEMPLATE_EXERCISE_ANIMATION_MS);
+
+      removeAnimationTimersRef.current.set(exerciseId, timerId);
+    },
+    [onRemoveExercise],
+  );
+
+  return (
+    <LayoutGroup id="free-workout-builder">
+      <AnimatePresence initial={false} mode="popLayout">
+        {hasSelectedMuscleGroups ? (
+          baseSections.map((section) => (
+            <motion.section
+              key={section.muscleGroup.id}
+              layout
+              className="panel plan-section template-builder-section"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={baseSectionTransition}
+            >
+            <div className="section-title">
+              <span>{section.muscleGroup.name}</span>
+              <span>База упражнений</span>
+            </div>
+            <div className="template-builder-scroll free-workout-base-scroll">
+              {section.exercises.length ? (
+                <div className="template-base-list">
+                  {section.exercises.map((exercise) => {
+                    const isSelected = selectedExerciseSet.has(exercise.id);
+                    const isRemoving = removingExerciseIds.has(exercise.id);
+                    const isBaseSelected = isSelected && !isRemoving;
+
+                    return (
+                      <button
+                        key={exercise.id}
+                        className={`plan-row template-base-exercise-button${isBaseSelected ? " is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={isBaseSelected}
+                        onClick={() => (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id))}
+                      >
+                        <span className="template-choice-name">{exercise.name}</span>
+                        <span className={`template-base-status${isBaseSelected ? " is-visible" : ""}`}>Выбрано</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="template-builder-empty">В базе пока нет упражнений</div>
+              )}
+            </div>
+            </motion.section>
+          ))
+        ) : null}
+      </AnimatePresence>
+
+      <motion.section
+        layout
+        className="panel plan-section template-builder-section"
+        transition={baseSectionTransition}
+      >
+        <div className="section-title">
+          <span>Выбранные упражнения</span>
+        </div>
+        <div className="template-builder-scroll" data-selected-exercise-list data-draft-kind="free">
+          {selectedExercises.length ? (
+            selectedExercises.map((exercise, index) => {
+              const isEntering = recentlyAddedExerciseId === exercise.id;
+              const isRemoving = removingExerciseIds.has(exercise.id);
+
+              return (
+                <div
+                  key={`${exercise.id}-${index}`}
+                  className={`plan-row template-selected-item free-workout-selected-item${exercise.isMissing ? " is-missing" : ""}${isEntering ? " is-entering" : ""}${isRemoving ? " is-removing" : ""}`}
+                  data-selected-exercise-item
+                  data-selected-exercise-id={exercise.id}
+                  data-exercise-id={exercise.id}
+                >
+                  <input type="hidden" name="exerciseIds" value={exercise.id} data-selected-exercise-input />
+                  <button
+                    className="template-drag-handle"
+                    type="button"
+                    data-template-drag-handle
+                    aria-label={`Перетащить упражнение ${exercise.name}`}
+                    onPointerDown={onDragStart}
+                  >
+                    <span className="template-drag-grip" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </button>
+                  <span className="template-selected-number" data-selected-exercise-index data-selected-exercise-number>
+                    {index + 1}
+                  </span>
+                  <span className="template-selected-name">{exercise.name}</span>
+                  <span className="template-selected-meta">{exercise.muscleGroupName}</span>
+                  <button
+                    className="template-remove-button"
+                    type="button"
+                    data-action="remove-template-exercise"
+                    data-exercise-id={exercise.id}
+                    aria-label={`Убрать ${exercise.name}`}
+                    onClick={() => runRemoveExercise(exercise.id)}
+                  />
+                </div>
+              );
+            })
+          ) : (
+            <div className="template-builder-empty">{selectedEmptyText}</div>
+          )}
+        </div>
+      </motion.section>
+    </LayoutGroup>
   );
 }
 
@@ -3256,9 +3731,11 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
         <section key={section.muscleGroup.id} className="journal-detail-group">
           <div className="journal-muscle-header">
             <h2>{section.muscleGroup.name}</h2>
-            <span className="journal-section-template">
-              Шаблон: {section.templateName || "не указан"}
-            </span>
+            {section.templateName && section.templateName !== "Шаблон не указан" ? (
+              <span className="journal-section-template">
+                Шаблон: {section.templateName}
+              </span>
+            ) : null}
           </div>
 
           <div className="journal-exercise-list">
