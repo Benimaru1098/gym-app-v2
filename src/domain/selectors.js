@@ -494,12 +494,7 @@ function getSelectedTemplateForMuscleGroup(data, workoutGroup, muscleGroupId) {
     (template) => template.muscleGroupId === muscleGroupId && template.isDefault && !template.isArchived,
   );
   const overrideValue = workoutGroup.selectedTemplateOverrideByMuscleGroupId?.[muscleGroupId];
-  const hasLegacyManualSelection =
-    overrideValue === undefined &&
-    selectedTemplate &&
-    !selectedTemplate.isDefault &&
-    !isProtectedTemplate(selectedTemplate);
-  const hasManualSelection = overrideValue === true || hasLegacyManualSelection;
+  const hasManualSelection = overrideValue === true;
 
   if (selectedTemplate && hasManualSelection) {
     return selectedTemplate;
@@ -537,14 +532,12 @@ function buildTemplateExerciseItems(data, template, exercisesById) {
   });
 }
 
-function getDefaultSetCountForMuscleGroup(muscleGroupId) {
-  return muscleGroupId === "biceps" || muscleGroupId === "triceps" ? 3 : 4;
-}
+const DEFAULT_ACTIVE_SET_COUNT = 4;
 
-function createInitialActiveSetRows(previousSets, muscleGroupId) {
+function createInitialActiveSetRows(previousSets) {
   const sourceSets = previousSets.length
     ? previousSets
-    : Array.from({ length: getDefaultSetCountForMuscleGroup(muscleGroupId) }, (_, index) => ({
+    : Array.from({ length: DEFAULT_ACTIVE_SET_COUNT }, (_, index) => ({
         setNumber: index + 1,
         weightKg: "",
         reps: "",
@@ -621,7 +614,7 @@ export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, 
         trackingType: exercise.trackingType,
         previousSets,
         replacement: null,
-        sets: createInitialActiveSetRows(previousSets, muscleGroupId),
+        sets: createInitialActiveSetRows(previousSets),
       });
     }
   }
@@ -706,7 +699,7 @@ export function buildFreeWorkoutSessionDraft(data, selectedExerciseIds, sessionI
       trackingType: exercise.trackingType ?? "weight_reps",
       previousSets,
       replacement: null,
-      sets: createInitialActiveSetRows(previousSets, muscleGroup.id),
+      sets: createInitialActiveSetRows(previousSets),
     });
   }
 

@@ -19,6 +19,18 @@ const STORE_NAMES = [
   "activeWorkoutSessions",
 ];
 
+const EXPORT_APP_ID = "gym-app";
+const EXPORT_FORMAT = "gym-app-data-export";
+const EXPORT_VERSION = 1;
+const TRANSFER_STORE_NAMES = [
+  "muscleGroups",
+  "exercises",
+  "exerciseTemplates",
+  "workoutGroups",
+  "workoutCycles",
+  "workoutLogs",
+];
+
 function requestToPromise(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -304,7 +316,142 @@ export async function loadAppData() {
 }
 
 export async function exportAppData() {
-  return loadAppData();
+  const data = await loadAppData();
+
+  return {
+    app: EXPORT_APP_ID,
+    format: EXPORT_FORMAT,
+    version: EXPORT_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    description:
+      "Файл переноса данных Gym App. Незавершённые тренировки не экспортируются.",
+    data: {
+      metadata: data.metadata,
+      muscleGroups: [...data.muscleGroups].sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0)),
+      exercises: data.exercises.map(normalizeExercise),
+      exerciseTemplates: data.exerciseTemplates.map(normalizeExerciseTemplate),
+      workoutGroups: data.workoutGroups,
+      workoutCycles: data.workoutCycles,
+      workoutLogs: [...data.workoutLogs].sort((a, b) => {
+        const firstDate = new Date(a.date ?? a.completedAt ?? 0).getTime();
+        const secondDate = new Date(b.date ?? b.completedAt ?? 0).getTime();
+        return secondDate - firstDate;
+      }),
+    },
+  };
+}
+
+function cloneJsonValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function getImportDataPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Invalid import file");
+  }
+
+  if (
+    payload.app === EXPORT_APP_ID &&
+    payload.format === EXPORT_FORMAT &&
+    payload.version === EXPORT_VERSION &&
+    payload.data &&
+    typeof payload.data === "object" &&
+    !Array.isArray(payload.data)
+  ) {
+    return payload.data;
+  }
+
+  throw new Error("Unsupported import file");
+}
+
+function normalizeImportedRecord(record, storeName) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error(`Invalid ${storeName} record`);
+  }
+
+  if (typeof record.id !== "string" || !record.id.trim()) {
+    throw new Error(`Invalid ${storeName} record id`);
+  }
+
+  return cloneJsonValue(record);
+}
+
+function normalizeImportedData(payload) {
+  const source = getImportDataPayload(payload);
+  const normalizedData = {};
+
+  for (const storeName of TRANSFER_STORE_NAMES) {
+    if (!Array.isArray(source[storeName])) {
+      throw new Error(`Missing ${storeName}`);
+    }
+
+    normalizedData[storeName] = source[storeName].map((record) =>
+      normalizeImportedRecord(record, storeName),
+    );
+  }
+
+  normalizedData.exercises = normalizedData.exercises.map(normalizeExercise);
+  normalizedData.exerciseTemplates = normalizedData.exerciseTemplates.map(normalizeExerciseTemplate);
+
+  for (const muscleGroup of normalizedData.muscleGroups) {
+    normalizedData.exerciseTemplates = getNormalizedTemplatesForMuscleGroup(
+      normalizedData.exerciseTemplates,
+      muscleGroup.id,
+    ).templates;
+  }
+
+  return {
+    metadata:
+      source.metadata && typeof source.metadata === "object" && !Array.isArray(source.metadata)
+        ? cloneJsonValue(source.metadata)
+        : null,
+    ...normalizedData,
+  };
+}
+
+export async function importAppData(payload) {
+  const importedData = normalizeImportedData(payload);
+  const database = await openAppDatabase();
+
+  try {
+    const now = new Date().toISOString();
+    const metadata = {
+      ...(importedData.metadata ?? {}),
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: importedData.metadata?.createdAt ?? now,
+      updatedAt: now,
+      importedAt: now,
+    };
+    const transaction = database.transaction(STORE_NAMES, "readwrite");
+    const done = transactionDone(transaction);
+
+    for (const storeName of STORE_NAMES) {
+      transaction.objectStore(storeName).clear();
+    }
+
+    transaction.objectStore("metadata").put(metadata);
+
+    for (const storeName of TRANSFER_STORE_NAMES) {
+      const store = transaction.objectStore(storeName);
+
+      for (const record of importedData[storeName]) {
+        store.put(record);
+      }
+    }
+
+    await done;
+    await ensureSystemTemplates(database);
+
+    return {
+      importedCounts: Object.fromEntries(
+        TRANSFER_STORE_NAMES.map((storeName) => [storeName, importedData[storeName].length]),
+      ),
+    };
+  } finally {
+    database.close();
+  }
 }
 
 export async function saveExerciseTemplate(template) {
@@ -325,6 +472,8 @@ export async function saveExerciseTemplate(template) {
       preferredDefaultId,
     );
     const defaultTemplateId = normalizedResult.defaultTemplateId;
+    const shouldForceDefaultSelection =
+      normalizedTemplate.isDefault && defaultTemplateId === normalizedTemplate.id;
     const normalizedTemplatesById = new Map(
       normalizedResult.templates.map((item) => [item.id, item]),
     );
@@ -360,7 +509,15 @@ export async function saveExerciseTemplate(template) {
           !isProtectedTemplate(selectedTemplate);
         const hasManualSelection = overrideValue === true || hasLegacyManualSelection;
 
-        if (hasManualSelection || selectedTemplateId === defaultTemplateId) {
+        if (
+          shouldForceDefaultSelection &&
+          selectedTemplateId === defaultTemplateId &&
+          overrideValue === false
+        ) {
+          continue;
+        }
+
+        if (!shouldForceDefaultSelection && (hasManualSelection || selectedTemplateId === defaultTemplateId)) {
           continue;
         }
 

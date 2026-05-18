@@ -91,6 +91,10 @@ noscript {
   color: var(--text);
 }
 
+.import-file-input {
+  display: none;
+}
+
 .app-shell {
   position: relative;
   width: 100%;
@@ -303,8 +307,6 @@ h2 {
   font-size: clamp(30px, 9vw, 42px);
   font-weight: 600;
   line-height: 0.98;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .workout-name-line + .workout-name-line {
@@ -399,7 +401,6 @@ h2 {
   font-size: 15px;
   font-weight: 500;
   text-align: left;
-  white-space: nowrap;
 }
 
 .prep-template-select {
@@ -427,8 +428,6 @@ h2 {
   min-width: 0;
   overflow: hidden;
   color: var(--text-soft);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .plan-row .prep-template-title span.is-missing {
@@ -525,8 +524,6 @@ h2 {
 .template-select-option span:first-child {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .template-select-option.is-selected {
@@ -587,10 +584,10 @@ h2 {
 }
 
 .prep-exercise-row {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
   min-height: 46px;
   padding: 9px 11px;
   border: 1px solid var(--line);
@@ -600,19 +597,16 @@ h2 {
 
 .prep-exercise-row strong {
   min-width: 0;
-  overflow: hidden;
   color: var(--text);
   font-size: 14px;
   font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .prep-exercise-row span {
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
-  white-space: nowrap;
 }
 
 .prep-exercise-row.is-missing strong,
@@ -725,8 +719,6 @@ h2 {
   min-width: 0;
   overflow: hidden;
   font-size: 22px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .journal-card-chevron {
@@ -816,8 +808,6 @@ h2 {
   min-width: 0;
   overflow: hidden;
   font-size: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .journal-section-template {
@@ -825,8 +815,6 @@ h2 {
   font-size: 20px;
   font-weight: 500;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .journal-template-list {
@@ -851,8 +839,6 @@ h2 {
   color: var(--text-soft);
   font-size: 14px;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .journal-exercise-list {
@@ -921,7 +907,7 @@ h2 {
 
 .journal-set-list strong {
   color: var(--text);
-  font-size: 22px;
+  font-size: 21px;
   font-weight: 600;
   line-height: 1.05;
 }
@@ -1027,7 +1013,6 @@ h2 {
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
-  white-space: nowrap;
 }
 
 .active-set-remove-button {
@@ -1454,7 +1439,11 @@ h2 {
 .template-selected-item {
   display: flex;
   gap: 0px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 50px;
+  overflow: hidden;
   padding: 8px 7px 8px 9px;
 }
 
@@ -1493,6 +1482,7 @@ h2 {
 .template-drag-handle,
 .template-remove-button {
   display: grid;
+  flex: 0 0 20px;
   place-items: center;
   width: 20px;
   height: 32px;
@@ -1526,6 +1516,7 @@ h2 {
 }
 
 .template-selected-number {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: 15px;
   font-weight: 600;
@@ -1533,9 +1524,11 @@ h2 {
   margin: 0 5px;
 }
 
-.template-selected-name,
-.template-base-exercise-button .template-choice-name {
+.template-selected-name {
+  display: block;
+  flex: 1 1 0;
   min-width: 0;
+  max-width: 100%;
   color: var(--text);
   font-size: 15px;
   font-weight: 500;
@@ -1544,8 +1537,10 @@ h2 {
   white-space: nowrap;
 }
 
-.template-selected-name {
-  flex: 1 1 auto;
+.template-base-exercise-button .template-choice-name {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .free-workout-selected-item .template-selected-name {
@@ -1553,16 +1548,19 @@ h2 {
 }
 
 .template-selected-meta {
-  flex: 0 1 auto;
+  flex: 0 1 20%;
+  min-width: 0;
   max-width: 34%;
   color: var(--muted);
   font-size: 15px;
   font-weight: 500;
   overflow: hidden;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   margin-right: 5px;
+}
+
+.is-dragging .template-selected-meta {
+  display: none;
 }
 
 .template-selected-item.is-missing .template-selected-name {
@@ -1608,18 +1606,6 @@ h2 {
 
 .template-base-exercise-button.is-selected:active {
   background: var(--accent);
-}
-
-.template-base-status {
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 500;
-  opacity: 0;
-  transition: opacity 170ms ease;
-}
-
-.template-base-status.is-visible {
-  opacity: 1;
 }
 
 .template-choice-row {

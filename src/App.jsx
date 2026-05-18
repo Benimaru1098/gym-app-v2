@@ -7,6 +7,7 @@ import {
   deleteExerciseTemplate,
   exportAppData,
   finishActiveWorkoutSession,
+  importAppData,
   loadAppData,
   saveActiveWorkoutSession,
   saveExercise,
@@ -846,6 +847,7 @@ function App() {
   const scrollPositionsRef = useRef(new Map());
   const templateDragRef = useRef(null);
   const activeWorkoutSaveQueueRef = useRef(Promise.resolve());
+  const importFileInputRef = useRef(null);
   const screenAnimationModeRef = useRef("main");
   const shouldReduceMotion = useReducedMotion();
 
@@ -1982,8 +1984,9 @@ function App() {
       const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
+      const dateStamp = new Date().toISOString().slice(0, 10);
       link.href = url;
-      link.download = "gym-app-data.json";
+      link.download = `gym-app-data-${dateStamp}.json`;
       link.click();
       URL.revokeObjectURL(url);
       showNotice("Экспорт подготовлен");
@@ -1994,8 +1997,61 @@ function App() {
   }, [showNotice]);
 
   const handleImportData = useCallback(() => {
-    showNotice("Импорт данных будет добавлен позже");
-  }, [showNotice]);
+    importFileInputRef.current?.click();
+  }, []);
+
+  const handleImportFileChange = useCallback(
+    async (event) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+
+      if (!file) {
+        return;
+      }
+
+      if (
+        !window.confirm(
+          "Импорт заменит текущие данные приложения данными из файла. Незавершённые тренировки не переносятся. Продолжить?",
+        )
+      ) {
+        return;
+      }
+
+      try {
+        await activeWorkoutSaveQueueRef.current.catch(() => {});
+
+        const payload = JSON.parse(await file.text());
+        await importAppData(payload);
+        activeWorkoutSaveQueueRef.current = Promise.resolve();
+        const data = await loadAppData();
+
+        scrollPositionsRef.current.clear();
+        navigate(
+          {
+            activeTab: "plan",
+            activeWorkoutSession: null,
+            activeExerciseReplacement: null,
+            data,
+            error: null,
+            exerciseDraft: { name: "" },
+            freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
+            homeView: { name: "overview", workoutGroupId: null },
+            isLoading: false,
+            journalView: { name: "overview", workoutLogId: null },
+            planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
+            templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
+            templateSelector: null,
+          },
+          { history: "replace", scroll: "top" },
+        );
+        showNotice("Данные импортированы");
+      } catch (error) {
+        console.error(error);
+        showNotice("Не удалось импортировать данные", "error");
+      }
+    },
+    [navigate, showNotice],
+  );
 
   const handleClearWorkouts = useCallback(async () => {
     if (!window.confirm("Очистить все завершённые тренировки?")) {
@@ -2188,6 +2244,14 @@ function App() {
         canInstall={state.canInstall}
         isStandalone={state.isStandalone}
         onInstall={handleInstallApp}
+      />
+
+      <input
+        ref={importFileInputRef}
+        className="import-file-input"
+        type="file"
+        accept="application/json,.json"
+        onChange={handleImportFileChange}
       />
 
       <Notice notice={state.notice} />
@@ -2846,7 +2910,6 @@ function FreeWorkoutExerciseBuilder({
                         onClick={() => (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id))}
                       >
                         <span className="template-choice-name">{exercise.name}</span>
-                        <span className={`template-base-status${isBaseSelected ? " is-visible" : ""}`}>Выбрано</span>
                       </button>
                     );
                   })}
@@ -3299,7 +3362,7 @@ function PlanOverview({
             <SvgIcon name="download" />
             <span>Экспорт данных</span>
           </button>
-          <button className="action-button" type="button" disabled title="Будет добавлено позже">
+          <button className="action-button" type="button" onClick={onImportData}>
             <SvgIcon name="upload" />
             <span>Импорт данных</span>
           </button>
@@ -3632,7 +3695,6 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                     onClick={() => (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id))}
                   >
                     <span className="template-choice-name">{exercise.name}</span>
-                    <span className={`template-base-status${isBaseSelected ? " is-visible" : ""}`}>Выбрано</span>
                   </button>
                 );
               })
