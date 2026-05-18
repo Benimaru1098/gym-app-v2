@@ -369,6 +369,14 @@ function formatLastSetResult(lastSet) {
   return `последний: ${formatWeightValue(lastSet.weightKg)}×${lastSet.reps}`;
 }
 
+function normalizeSearchValue(value) {
+  return String(value ?? "").trim().toLocaleLowerCase("ru-RU");
+}
+
+function matchesSearchValue(value, normalizedQuery) {
+  return normalizeSearchValue(value).includes(normalizedQuery);
+}
+
 function formatDate(dateValue) {
   if (!dateValue) {
     return "Дата не указана";
@@ -2711,6 +2719,7 @@ function FreeWorkoutExerciseBuilder({
   onDragStart,
 }) {
   const shouldReduceMotion = useReducedMotion();
+  const [baseSearchQueries, setBaseSearchQueries] = useState({});
   const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState(null);
   const [removingExerciseIds, setRemovingExerciseIds] = useState(() => new Set());
   const addAnimationTimerRef = useRef(null);
@@ -2719,6 +2728,36 @@ function FreeWorkoutExerciseBuilder({
     ? { duration: 0 }
     : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
   const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения выше" : "Выбери группы мышц";
+  const filteredBaseSections = useMemo(
+    () =>
+      baseSections.map((section) => {
+        const searchQuery = baseSearchQueries[section.muscleGroup.id] ?? "";
+        const normalizedQuery = normalizeSearchValue(searchQuery);
+
+        return {
+          ...section,
+          searchQuery,
+          filteredExercises: normalizedQuery
+            ? section.exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedQuery))
+            : section.exercises,
+          emptyText: section.exercises.length ? "Ничего не найдено" : "В базе пока нет упражнений",
+        };
+      }),
+    [baseSections, baseSearchQueries],
+  );
+
+  const handleBaseSearchChange = useCallback((muscleGroupId, value) => {
+    setBaseSearchQueries((current) => {
+      if (current[muscleGroupId] === value) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [muscleGroupId]: value,
+      };
+    });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -2771,7 +2810,7 @@ function FreeWorkoutExerciseBuilder({
     <LayoutGroup id="free-workout-builder">
       <AnimatePresence initial={false} mode="popLayout">
         {hasSelectedMuscleGroups ? (
-          baseSections.map((section) => (
+          filteredBaseSections.map((section) => (
             <motion.section
               key={section.muscleGroup.id}
               layout
@@ -2785,10 +2824,15 @@ function FreeWorkoutExerciseBuilder({
               <span>{section.muscleGroup.name}</span>
               <span>База упражнений</span>
             </div>
+            <SearchField
+              value={section.searchQuery}
+              onChange={(value) => handleBaseSearchChange(section.muscleGroup.id, value)}
+              placeholder="Поиск упражнения"
+            />
             <div className="template-builder-scroll free-workout-base-scroll">
-              {section.exercises.length ? (
+              {section.filteredExercises.length ? (
                 <div className="template-base-list">
-                  {section.exercises.map((exercise) => {
+                  {section.filteredExercises.map((exercise) => {
                     const isSelected = selectedExerciseSet.has(exercise.id);
                     const isRemoving = removingExerciseIds.has(exercise.id);
                     const isBaseSelected = isSelected && !isRemoving;
@@ -2808,7 +2852,7 @@ function FreeWorkoutExerciseBuilder({
                   })}
                 </div>
               ) : (
-                <div className="template-builder-empty">В базе пока нет упражнений</div>
+                <div className="template-builder-empty">{section.emptyText}</div>
               )}
             </div>
             </motion.section>
@@ -3271,6 +3315,16 @@ function PlanOverview({
 
 function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
   const details = buildTemplatesForMuscleGroup(data, muscleGroupId);
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
+  const filteredTemplates = useMemo(() => {
+    if (!normalizedSearchQuery) {
+      return details.templates;
+    }
+
+    return details.templates.filter((template) => matchesSearchValue(template.name, normalizedSearchQuery));
+  }, [details.templates, normalizedSearchQuery]);
+  const emptyText = details.templates.length ? "Ничего не найдено" : "Пока нет шаблонов";
 
   return (
     <section className="screen plan-screen">
@@ -3278,9 +3332,11 @@ function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
         <ScreenTitle onBack={onBack}>Шаблоны: {details.muscleGroup?.name || "Мышца"}</ScreenTitle>
       </header>
 
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск шаблона" />
+
       <div className="template-list">
-        {details.templates.length ? (
-          details.templates.map((template) => (
+        {filteredTemplates.length ? (
+          filteredTemplates.map((template) => (
             <TemplateCard
               key={template.id}
               template={template}
@@ -3290,7 +3346,7 @@ function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
           ))
         ) : (
           <div className="empty-state">
-            <h2>Пока нет шаблонов</h2>
+            <h2>{emptyText}</h2>
           </div>
         )}
       </div>
@@ -3404,12 +3460,46 @@ function TemplateFormScreen({
   );
 }
 
+function SearchField({ value, onChange, placeholder }) {
+  const handleChange = useCallback(
+    (event) => {
+      onChange(event.target.value);
+    },
+    [onChange],
+  );
+
+  return (
+    <label className="search-field">
+      <span className="search-field-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: icon("search") }} />
+      <input
+        className="search-field-input"
+        type="search"
+        value={value}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        autoComplete="off"
+        onChange={handleChange}
+      />
+    </label>
+  );
+}
+
 function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, onRemoveExercise, onDragStart }) {
+  const [baseSearchQuery, setBaseSearchQuery] = useState("");
   const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState(null);
   const [removingExerciseIds, setRemovingExerciseIds] = useState(() => new Set());
   const addAnimationTimerRef = useRef(null);
   const removeAnimationTimersRef = useRef(new Map());
   const selectedSet = new Set(selectedExerciseIds);
+  const normalizedBaseSearchQuery = useMemo(() => normalizeSearchValue(baseSearchQuery), [baseSearchQuery]);
+  const filteredBaseExercises = useMemo(() => {
+    if (!normalizedBaseSearchQuery) {
+      return details.exercises;
+    }
+
+    return details.exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedBaseSearchQuery));
+  }, [details.exercises, normalizedBaseSearchQuery]);
+  const baseEmptyText = details.exercises.length ? "Ничего не найдено" : "В базе пока нет упражнений";
   const selectedExercises = selectedExerciseIds.map((exerciseId) => {
     const exercise = details.exercises.find((item) => item.id === exerciseId);
     return exercise || { id: exerciseId, name: "Упражнение не найдено", isMissing: true };
@@ -3524,10 +3614,11 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
         <div className="section-title">
           <span>База упражнений</span>
         </div>
+        <SearchField value={baseSearchQuery} onChange={setBaseSearchQuery} placeholder="Поиск упражнения" />
         <div className="template-builder-scroll">
           <div className="template-base-list">
-            {details.exercises.length ? (
-              details.exercises.map((exercise) => {
+            {filteredBaseExercises.length ? (
+              filteredBaseExercises.map((exercise) => {
                 const isSelected = selectedSet.has(exercise.id);
                 const isRemoving = removingExerciseIds.has(exercise.id);
                 const isBaseSelected = isSelected && !isRemoving;
@@ -3546,7 +3637,7 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                 );
               })
             ) : (
-              <div className="template-builder-empty">В базе пока нет упражнений</div>
+              <div className="template-builder-empty">{baseEmptyText}</div>
             )}
           </div>
         </div>
@@ -3557,6 +3648,16 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
 
 function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
   const details = buildExercisesForMuscleGroup(data, muscleGroupId);
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
+  const filteredExercises = useMemo(() => {
+    if (!normalizedSearchQuery) {
+      return details.exercises;
+    }
+
+    return details.exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedSearchQuery));
+  }, [details.exercises, normalizedSearchQuery]);
+  const emptyText = details.exercises.length ? "Ничего не найдено" : "Пока нет упражнений";
 
   return (
     <section className="screen plan-screen">
@@ -3564,9 +3665,11 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
         <ScreenTitle onBack={onBack}>База: {details.muscleGroup?.name || "Мышца"}</ScreenTitle>
       </header>
 
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск упражнения" />
+
       <div className="template-list">
-        {details.exercises.length ? (
-          details.exercises.map((exercise) => (
+        {filteredExercises.length ? (
+          filteredExercises.map((exercise) => (
             <article key={exercise.id} className="template-card">
               <div className="template-card-topline">
                 <h2>{exercise.name}</h2>
@@ -3579,7 +3682,7 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
           ))
         ) : (
           <div className="empty-state">
-            <h2>Пока нет упражнений</h2>
+            <h2>{emptyText}</h2>
           </div>
         )}
       </div>
@@ -3616,6 +3719,12 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onSav
             onChange={onNameChange}
           />
         </label>
+
+        {isEdit ? (
+          <p className="form-warning">
+            История весов и повторов останется привязана к этому упражнению. Если это другое движение, создай новое упражнение вместо переименования.
+          </p>
+        ) : null}
 
         <button className="action-button" type="submit">
           <span>Сохранить упражнение</span>
@@ -3774,12 +3883,25 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
 
 function TemplateSelector({ data, selector, onClose, onSelect }) {
   const shouldReduceMotion = useReducedMotion();
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
+  const details = useMemo(
+    () => (data && selector ? buildTemplatesForMuscleGroup(data, selector.muscleGroupId) : { templates: [] }),
+    [data, selector],
+  );
+  const filteredTemplates = useMemo(() => {
+    if (!normalizedSearchQuery) {
+      return details.templates;
+    }
+
+    return details.templates.filter((template) => matchesSearchValue(template.name, normalizedSearchQuery));
+  }, [details.templates, normalizedSearchQuery]);
+  const emptyText = details.templates.length ? "Ничего не найдено" : "Шаблонов ещё нет";
 
   if (!data || !selector) {
     return null;
   }
 
-  const details = buildTemplatesForMuscleGroup(data, selector.muscleGroupId);
   const workoutGroup = data.workoutGroups.find((group) => group.id === selector.workoutGroupId);
   const selectedTemplateId = workoutGroup
     ? getSelectedTemplateIdForMuscleGroup(data, workoutGroup, selector.muscleGroupId)
@@ -3811,9 +3933,10 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
         transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
       >
         <div className="template-select-handle" aria-hidden="true" />
+        <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск шаблона" />
         <div className="template-select-list">
-          {details.templates.length ? (
-            details.templates.map((template) => (
+          {filteredTemplates.length ? (
+            filteredTemplates.map((template) => (
               <button
                 key={template.id}
                 className={`template-select-option${template.id === selectedTemplateId ? " is-selected" : ""}`}
@@ -3826,7 +3949,7 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
             ))
           ) : (
             <div className="empty-state compact-empty-state">
-              <h2>Шаблонов ещё нет</h2>
+              <h2>{emptyText}</h2>
             </div>
           )}
         </div>
@@ -3837,37 +3960,52 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
 
 function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSelect }) {
   const shouldReduceMotion = useReducedMotion();
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
+  const exerciseLog = selector && session ? session.exerciseLogs?.[selector.exerciseIndex] : null;
+  const exercises = useMemo(() => {
+    if (!data || !session || !exerciseLog) {
+      return [];
+    }
+
+    const templateSnapshot = session.templateSnapshots?.find(
+      (template) => template.muscleGroupId === exerciseLog.muscleGroupId,
+    );
+    const plannedExerciseIds = new Set(templateSnapshot?.exerciseIds ?? []);
+    const plannedExerciseId = exerciseLog.plannedExerciseId ?? exerciseLog.exerciseId;
+    const usedExerciseIds = new Set(
+      session.exerciseLogs
+        .filter((_, currentExerciseIndex) => currentExerciseIndex !== selector.exerciseIndex)
+        .map((item) => item.exerciseId)
+        .filter(Boolean),
+    );
+
+    return data.exercises
+      .filter((exercise) => exercise.muscleGroupId === exerciseLog.muscleGroupId && !exercise.isArchived)
+      .map((exercise) => ({
+        ...exercise,
+        isCurrent: exercise.id === exerciseLog.exerciseId,
+        isInPlan: plannedExerciseIds.has(exercise.id),
+        isPlannedForCurrentSlot: exercise.id === plannedExerciseId,
+        isUsedInWorkout: usedExerciseIds.has(exercise.id),
+      }));
+  }, [data, exerciseLog, selector, session]);
+  const filteredExercises = useMemo(() => {
+    if (!normalizedSearchQuery) {
+      return exercises;
+    }
+
+    return exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedSearchQuery));
+  }, [exercises, normalizedSearchQuery]);
+  const emptyText = exercises.length ? "Ничего не найдено" : "В базе нет упражнений";
 
   if (!data || !selector || !session) {
     return null;
   }
 
-  const exerciseLog = session.exerciseLogs?.[selector.exerciseIndex];
-
   if (!exerciseLog) {
     return null;
   }
-
-  const templateSnapshot = session.templateSnapshots?.find(
-    (template) => template.muscleGroupId === exerciseLog.muscleGroupId,
-  );
-  const plannedExerciseIds = new Set(templateSnapshot?.exerciseIds ?? []);
-  const plannedExerciseId = exerciseLog.plannedExerciseId ?? exerciseLog.exerciseId;
-  const usedExerciseIds = new Set(
-    session.exerciseLogs
-      .filter((_, currentExerciseIndex) => currentExerciseIndex !== selector.exerciseIndex)
-      .map((item) => item.exerciseId)
-      .filter(Boolean),
-  );
-  const exercises = data.exercises
-    .filter((exercise) => exercise.muscleGroupId === exerciseLog.muscleGroupId && !exercise.isArchived)
-    .map((exercise) => ({
-      ...exercise,
-      isCurrent: exercise.id === exerciseLog.exerciseId,
-      isInPlan: plannedExerciseIds.has(exercise.id),
-      isPlannedForCurrentSlot: exercise.id === plannedExerciseId,
-      isUsedInWorkout: usedExerciseIds.has(exercise.id),
-    }));
 
   return (
     <motion.div
@@ -3895,9 +4033,10 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
         transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
       >
         <div className="template-select-handle" aria-hidden="true" />
+        <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск упражнения" />
         <div className="template-select-list">
-          {exercises.length ? (
-            exercises.map((exercise) => {
+          {filteredExercises.length ? (
+            filteredExercises.map((exercise) => {
               const isDisabled = exercise.isCurrent || exercise.isUsedInWorkout;
               const status = exercise.isCurrent
                 ? "Текущее"
@@ -3924,7 +4063,7 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
             })
           ) : (
             <div className="empty-state compact-empty-state">
-              <h2>В базе нет упражнений</h2>
+              <h2>{emptyText}</h2>
             </div>
           )}
         </div>

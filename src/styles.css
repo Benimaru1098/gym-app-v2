@@ -465,10 +465,10 @@ h2 {
   bottom: 0;
   left: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
   max-width: 560px;
-  max-height: min(72dvh, 540px);
+  height: min(72dvh, 520px);
   margin: 0 auto;
   padding: 14px 14px calc(16px + env(safe-area-inset-bottom));
   overflow: hidden;
@@ -499,14 +499,15 @@ h2 {
 }
 
 .template-select-list {
-  display: grid;
+  display: flex;
   gap: 9px;
   min-height: 0;
-  max-height: min(calc(72dvh - 54px - env(safe-area-inset-bottom)), 468px);
+  max-height: none;
   overflow-y: auto;
   padding-bottom: 2px;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  flex-direction: column;
 }
 
 .template-select-option {
@@ -1299,6 +1300,53 @@ h2 {
   color: var(--text);
 }
 
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  width: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-soft);
+}
+
+.search-field:focus-within {
+  border-color: var(--accent);
+}
+
+.search-field-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.search-field-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.search-field-input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.search-field-input::placeholder {
+  color: var(--muted-2);
+}
+
+.search-field-input::-webkit-search-cancel-button {
+  display: none;
+}
+
 .form-warning {
   margin: 0;
   border: 1px solid var(--line);
@@ -1664,7 +1712,7 @@ h2 {
   display: grid;
   place-items: center;
   gap: 12px;
-  min-height: 230px;
+  min-height: 100%;
   padding: 26px;
   background: var(--surface);
   text-align: center;

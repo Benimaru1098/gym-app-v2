@@ -12,6 +12,7 @@ const icons = {
   trash: `<svg ${baseAttributes}><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m6 6 1 15h10l1-15"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`,
   chevronDown: `<svg ${baseAttributes}><path d="m6 9 6 6 6-6"/></svg>`,
   check: `<svg ${baseAttributes}><path d="m20 6-11 11-5-5"/></svg>`,
+  search: `<svg ${baseAttributes}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>`,
 };
 
 export function icon(name) {
