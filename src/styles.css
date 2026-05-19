@@ -547,6 +547,42 @@ h2 {
   font-weight: 600;
 }
 
+.exercise-technique-sheet {
+  height: min(76dvh, 440px);
+}
+
+.exercise-technique-header {
+  min-width: 0;
+}
+
+.exercise-technique-header h2 {
+  font-size: 20px;
+  line-height: 1.18;
+}
+
+.exercise-technique-media {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 14px;
+  text-align: center;
+}
+
+.exercise-technique-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.exercise-technique-media.is-error {
+  padding: 18px;
+  color: var(--danger);
+}
+
 .prep-plan-list,
 .previous-workout-list {
   display: grid;
@@ -588,11 +624,14 @@ h2 {
   flex-direction: column;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
+  width: 100%;
   min-height: 46px;
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-3);
+  color: inherit;
+  text-align: left;
 }
 
 .prep-exercise-row strong {
@@ -1224,6 +1263,26 @@ h2 {
   font-size: 17px;
 }
 
+.exercise-card-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.exercise-card-technique {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.exercise-card-title span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .template-edit-button {
   display: grid;
   place-items: center;
@@ -1283,6 +1342,49 @@ h2 {
   border-color: var(--line);
   background: var(--surface);
   color: var(--text);
+}
+
+.form-label-text {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.exercise-media-preview {
+  display: grid;
+  place-items: center;
+  min-height: 343px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-align: center;
+  position: relative;
+}
+
+.exercise-media-preview .gif-loading {
+  position: absolute;
+  font-size: 20px;
+}
+
+.exercise-media-preview img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.exercise-media-preview.is-loading img {
+  opacity: 0.55;
+}
+
+.exercise-media-preview.is-error {
+  color: var(--danger);
 }
 
 .search-field {
@@ -1537,6 +1639,13 @@ h2 {
   white-space: nowrap;
 }
 
+.template-technique-trigger {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
 .template-base-exercise-button .template-choice-name {
   color: var(--text);
   font-size: 15px;
@@ -1743,15 +1852,23 @@ h2 {
   animation: spin 0.8s linear infinite;
 }
 
-.notice {
+.notice-stack {
   position: fixed;
   right: 16px;
   bottom: calc(96px + env(safe-area-inset-bottom));
   left: 16px;
   z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   max-width: 528px;
-  min-height: 48px;
   margin: 0 auto;
+  pointer-events: none;
+}
+
+.notice {
+  width: 100%;
+  min-height: 48px;
   padding: 13px 15px;
   border: 1px solid var(--text);
   border-radius: 8px;
@@ -1870,6 +1987,9 @@ h2 {
 
 .nav-button:focus-visible,
 .back-icon-button:focus-visible,
+.exercise-card-technique:focus-visible,
+.prep-exercise-row:focus-visible,
+.template-technique-trigger:focus-visible,
 .journal-card:focus-visible,
 .workout-card-button:focus-visible,
 .prep-template-select:focus-visible,

@@ -526,6 +526,7 @@ function buildTemplateExerciseItems(data, template, exercisesById) {
     return {
       id: exerciseId,
       name: !isMissing ? exercise.name : "Упражнение не найдено",
+      mediaUrl: !isMissing ? exercise.mediaUrl ?? "" : "",
       isMissing,
       lastSet: getLastSetForExercise(data, exerciseId),
     };

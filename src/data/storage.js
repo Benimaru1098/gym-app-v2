@@ -101,6 +101,7 @@ function normalizeExerciseTemplate(template) {
 function normalizeExercise(exercise) {
   return {
     ...exercise,
+    mediaUrl: typeof exercise.mediaUrl === "string" ? exercise.mediaUrl.trim() : "",
     isArchived: Boolean(exercise.isArchived),
     usageCount: Number(exercise.usageCount ?? 0),
   };

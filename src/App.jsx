@@ -59,6 +59,10 @@ const HISTORY_TAG = "gym-app-react";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
 const TEMPLATE_DRAG_MAX_SCROLL_STEP = 18;
 const TEMPLATE_DRAG_REORDER_ANIMATION_MS = 150;
+const EXERCISE_TECHNIQUE_LONG_PRESS_MS = 520;
+const EXERCISE_TECHNIQUE_LONG_PRESS_MOVE_LIMIT = 10;
+const NOTICE_DURATION_MS = 2600;
+const MAX_VISIBLE_NOTICES = 3;
 
 const screenMotionVariants = {
   initial: (mode) => {
@@ -121,7 +125,8 @@ function createInitialState() {
     canInstall: false,
     data: null,
     error: null,
-    exerciseDraft: { name: "" },
+    exerciseDraft: { name: "", mediaUrl: "" },
+    exerciseTechniqueViewer: null,
     freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     homeView: { name: "overview", workoutGroupId: null },
     isLoading: true,
@@ -129,7 +134,7 @@ function createInitialState() {
       window.matchMedia?.("(display-mode: standalone)")?.matches ||
       window.navigator.standalone === true,
     journalView: { name: "overview", workoutLogId: null },
-    notice: null,
+    notices: [],
     planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
     templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
     templateSelector: null,
@@ -206,6 +211,7 @@ function applyHistoryEntry(current, entry) {
     ...current,
     activeTab,
     activeExerciseReplacement: null,
+    exerciseTechniqueViewer: null,
     templateSelector: null,
   };
 
@@ -533,6 +539,133 @@ function getActiveWorkoutSessionForGroup(appState, workoutGroupId) {
   })[0] ?? null;
 }
 
+function getExerciseTechniquePayload(exercise) {
+  if (!exercise) {
+    return { name: "Упражнение", mediaUrl: "" };
+  }
+
+  return {
+    name: exercise.name ?? exercise.exerciseNameSnapshot ?? "Упражнение",
+    mediaUrl: exercise.mediaUrl ?? "",
+  };
+}
+
+function useExerciseTechniqueLongPress(onOpenTechnique) {
+  const pressRef = useRef(null);
+  const consumeNextClickRef = useRef(false);
+  const consumeResetTimerRef = useRef(null);
+
+  const clearPress = useCallback(() => {
+    if (pressRef.current?.timerId) {
+      window.clearTimeout(pressRef.current.timerId);
+    }
+
+    pressRef.current = null;
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (event, exercise) => {
+      if (!onOpenTechnique || (typeof event.button === "number" && event.button !== 0)) {
+        return;
+      }
+
+      clearPress();
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const timerId = window.setTimeout(() => {
+        if (!pressRef.current) {
+          return;
+        }
+
+        consumeNextClickRef.current = true;
+        window.clearTimeout(consumeResetTimerRef.current);
+        consumeResetTimerRef.current = window.setTimeout(() => {
+          consumeNextClickRef.current = false;
+        }, 800);
+        pressRef.current = {
+          ...pressRef.current,
+          didOpen: true,
+        };
+        onOpenTechnique(exercise);
+      }, EXERCISE_TECHNIQUE_LONG_PRESS_MS);
+
+      pressRef.current = {
+        timerId,
+        startX,
+        startY,
+        didOpen: false,
+      };
+    },
+    [clearPress, onOpenTechnique],
+  );
+
+  const handlePointerMove = useCallback(
+    (event) => {
+      const press = pressRef.current;
+
+      if (!press || press.didOpen) {
+        return;
+      }
+
+      const distanceX = Math.abs(event.clientX - press.startX);
+      const distanceY = Math.abs(event.clientY - press.startY);
+
+      if (
+        distanceX > EXERCISE_TECHNIQUE_LONG_PRESS_MOVE_LIMIT ||
+        distanceY > EXERCISE_TECHNIQUE_LONG_PRESS_MOVE_LIMIT
+      ) {
+        clearPress();
+      }
+    },
+    [clearPress],
+  );
+
+  const handlePointerEnd = useCallback(() => {
+    clearPress();
+  }, [clearPress]);
+
+  const shouldConsumeClick = useCallback(() => {
+    if (!consumeNextClickRef.current) {
+      return false;
+    }
+
+    consumeNextClickRef.current = false;
+    window.clearTimeout(consumeResetTimerRef.current);
+    return true;
+  }, []);
+
+  const getLongPressProps = useCallback(
+    (exercise) => ({
+      onPointerDown: (event) => handlePointerDown(event, exercise),
+      onPointerMove: handlePointerMove,
+      onPointerUp: handlePointerEnd,
+      onPointerCancel: handlePointerEnd,
+      onPointerLeave: (event) => {
+        if (event.pointerType === "mouse") {
+          handlePointerEnd();
+        }
+      },
+      onContextMenu: (event) => {
+        if (consumeNextClickRef.current) {
+          event.preventDefault();
+        }
+      },
+    }),
+    [handlePointerDown, handlePointerEnd, handlePointerMove],
+  );
+
+  useEffect(
+    () => () => {
+      clearPress();
+      window.clearTimeout(consumeResetTimerRef.current);
+    },
+    [clearPress],
+  );
+
+  return { getLongPressProps, shouldConsumeClick };
+}
+
 function createId(prefix) {
   const safeRandom =
     typeof crypto !== "undefined" && crypto.randomUUID
@@ -842,7 +975,7 @@ function EditIconButton({ label, onClick }) {
 function App() {
   const [state, setState] = useState(createInitialState);
   const stateRef = useRef(state);
-  const noticeTimerRef = useRef(null);
+  const noticeTimersRef = useRef(new Map());
   const deferredInstallPromptRef = useRef(null);
   const scrollPositionsRef = useRef(new Map());
   const templateDragRef = useRef(null);
@@ -866,14 +999,66 @@ function App() {
 
   const showNotice = useCallback(
     (message, type = "info") => {
-      window.clearTimeout(noticeTimerRef.current);
-      patchState({ notice: { message, type } });
-      noticeTimerRef.current = window.setTimeout(() => {
-        patchState({ notice: null });
-      }, 2600);
+      const notice = {
+        id: createId("notice"),
+        message,
+        type,
+      };
+      const currentNotices = stateRef.current.notices ?? [];
+      const nextNotices = [...currentNotices, notice].slice(-MAX_VISIBLE_NOTICES);
+      const nextNoticeIds = new Set(nextNotices.map((item) => item.id));
+
+      for (const currentNotice of currentNotices) {
+        if (!nextNoticeIds.has(currentNotice.id)) {
+          window.clearTimeout(noticeTimersRef.current.get(currentNotice.id));
+          noticeTimersRef.current.delete(currentNotice.id);
+        }
+      }
+
+      patchState({ notices: nextNotices });
+
+      const timerId = window.setTimeout(() => {
+        patchState((current) => ({
+          notices: (current.notices ?? []).filter((item) => item.id !== notice.id),
+        }));
+        noticeTimersRef.current.delete(notice.id);
+      }, NOTICE_DURATION_MS);
+
+      noticeTimersRef.current.set(notice.id, timerId);
     },
     [patchState],
   );
+
+  useEffect(() => {
+    return () => {
+      noticeTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      noticeTimersRef.current.clear();
+    };
+  }, []);
+
+  const openExerciseTechnique = useCallback(
+    (exercise) => {
+      const payload = getExerciseTechniquePayload(exercise);
+      const mediaUrl = payload.mediaUrl?.trim() || "";
+
+      if (!mediaUrl) {
+        showNotice("GIF не добавлена");
+        return;
+      }
+
+      patchState({
+        exerciseTechniqueViewer: {
+          name: payload.name,
+          mediaUrl,
+        },
+      });
+    },
+    [patchState, showNotice],
+  );
+
+  const closeExerciseTechnique = useCallback(() => {
+    patchState({ exerciseTechniqueViewer: null });
+  }, [patchState]);
 
   const refreshData = useCallback(async () => {
     const data = await loadAppData();
@@ -1153,6 +1338,7 @@ function App() {
       if (tabId !== current.activeTab) {
         nextPatch.templateSelector = null;
         nextPatch.activeExerciseReplacement = null;
+        nextPatch.exerciseTechniqueViewer = null;
       }
 
       const hasOpenNestedView =
@@ -1241,7 +1427,7 @@ function App() {
       navigate({
         activeTab: "plan",
         planView: { name: "createExercise", muscleGroupId },
-        exerciseDraft: { name: "" },
+        exerciseDraft: { name: "", mediaUrl: "" },
       });
     },
     [navigate],
@@ -1253,7 +1439,10 @@ function App() {
       navigate({
         activeTab: "plan",
         planView: { name: "editExercise", muscleGroupId, exerciseId },
-        exerciseDraft: { name: details.exercise?.name || "" },
+        exerciseDraft: {
+          name: details.exercise?.name || "",
+          mediaUrl: details.exercise?.mediaUrl || "",
+        },
       });
     },
     [navigate],
@@ -1912,7 +2101,12 @@ function App() {
 
   const handleExerciseNameChange = useCallback((event) => {
     const value = event.target.value;
-    patchState({ exerciseDraft: { name: value } });
+    patchState((current) => ({ exerciseDraft: { ...current.exerciseDraft, name: value } }));
+  }, [patchState]);
+
+  const handleExerciseMediaUrlChange = useCallback((event) => {
+    const value = event.target.value;
+    patchState((current) => ({ exerciseDraft: { ...current.exerciseDraft, mediaUrl: value } }));
   }, [patchState]);
 
   const handleSaveExercise = useCallback(
@@ -1926,6 +2120,7 @@ function App() {
           : buildExerciseCreationData(data, planView.muscleGroupId);
 
       const name = exerciseDraft.name.trim();
+      const mediaUrl = exerciseDraft.mediaUrl?.trim() || "";
       if (!name) {
         showNotice("Введите название упражнения", "error");
         return;
@@ -1935,6 +2130,7 @@ function App() {
         ...(details.exercise || {}),
         id: details.exercise?.id || createId("exercise"),
         name,
+        mediaUrl,
         muscleGroupId: details.exercise?.muscleGroupId || planView.muscleGroupId,
         trackingType: details.exercise?.trackingType || TRACKING_TYPES.WEIGHT_REPS,
         isArchived: Boolean(details.exercise?.isArchived),
@@ -2033,11 +2229,13 @@ function App() {
             activeExerciseReplacement: null,
             data,
             error: null,
-            exerciseDraft: { name: "" },
+            exerciseDraft: { name: "", mediaUrl: "" },
+            exerciseTechniqueViewer: null,
             freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
             homeView: { name: "overview", workoutGroupId: null },
             isLoading: false,
             journalView: { name: "overview", workoutLogId: null },
+            notices: [],
             planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
             templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
             templateSelector: null,
@@ -2112,6 +2310,7 @@ function App() {
             onActivePreviousExercise={handleActivePreviousExercise}
             onActiveNextExercise={handleActiveNextExercise}
             onFinishActiveWorkout={handleFinishActiveWorkout}
+            onOpenExerciseTechnique={openExerciseTechnique}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
             onOpenWorkoutPreparation={openWorkoutPreparation}
             onOpenTemplateSelector={openTemplateSelector}
@@ -2139,6 +2338,7 @@ function App() {
             onOpenExerciseGroup={openExerciseGroup}
             onOpenExerciseCreate={openExerciseCreate}
             onOpenExerciseEdit={openExerciseEdit}
+            onOpenExerciseTechnique={openExerciseTechnique}
             onTemplateNameChange={handleTemplateNameChange}
             onTemplateDefaultChange={handleTemplateDefaultChange}
             onAddDraftExercise={addDraftExercise}
@@ -2147,6 +2347,7 @@ function App() {
             onSaveTemplate={handleSaveTemplate}
             onDeleteTemplate={handleDeleteTemplate}
             onExerciseNameChange={handleExerciseNameChange}
+            onExerciseMediaUrlChange={handleExerciseMediaUrlChange}
             onSaveExercise={handleSaveExercise}
             onDeleteExercise={handleDeleteExercise}
             onExportData={handleExportData}
@@ -2192,6 +2393,7 @@ function App() {
     handleDeleteExercise,
     handleDeleteTemplate,
     handleExerciseNameChange,
+    handleExerciseMediaUrlChange,
     handleExportData,
     handleFinishActiveWorkout,
     handleContinueWorkout,
@@ -2207,6 +2409,7 @@ function App() {
     openExerciseEdit,
     openExerciseGroup,
     openExerciseReplacement,
+    openExerciseTechnique,
     openFreeWorkoutPreparation,
     openJournalWorkout,
     openTemplateCreate,
@@ -2254,7 +2457,7 @@ function App() {
         onChange={handleImportFileChange}
       />
 
-      <Notice notice={state.notice} />
+      <Notice notices={state.notices} />
 
       <AnimatePresence>
         {state.templateSelector ? (
@@ -2277,6 +2480,16 @@ function App() {
             session={getActiveWorkoutSessionFromState(state)}
             onClose={closeExerciseReplacement}
             onSelect={selectReplacementExercise}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {state.exerciseTechniqueViewer ? (
+          <ExerciseTechniqueSheet
+            key="exercise-technique"
+            viewer={state.exerciseTechniqueViewer}
+            onClose={closeExerciseTechnique}
           />
         ) : null}
       </AnimatePresence>
@@ -2391,25 +2604,33 @@ function InstallButton({ activeTab, canInstall, isStandalone, onInstall }) {
   );
 }
 
-function Notice({ notice }) {
+function Notice({ notices }) {
   const shouldReduceMotion = useReducedMotion();
+  const visibleNotices = Array.isArray(notices) ? notices : [];
+
+  if (!visibleNotices.length) {
+    return null;
+  }
 
   return (
-    <AnimatePresence>
-      {notice ? (
-        <motion.div
-          key={`${notice.type}-${notice.message}`}
-          className={`notice notice-${notice.type}`}
-          role="status"
-          initial={shouldReduceMotion ? false : { opacity: 0, y: 18, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={shouldReduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
-          transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-        >
-          {notice.message}
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
+    <div className="notice-stack" aria-live="polite" aria-relevant="additions">
+      <AnimatePresence initial={false}>
+        {visibleNotices.map((notice) => (
+          <motion.div
+            key={notice.id}
+            layout
+            className={`notice notice-${notice.type}`}
+            role="status"
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={shouldReduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {notice.message}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -2426,6 +2647,7 @@ function HomeView({
   onActivePreviousExercise,
   onActiveNextExercise,
   onFinishActiveWorkout,
+  onOpenExerciseTechnique,
   onOpenFreeWorkoutPreparation,
   onOpenWorkoutPreparation,
   onOpenTemplateSelector,
@@ -2467,6 +2689,7 @@ function HomeView({
         workoutGroupId={homeView.workoutGroupId}
         onBack={onBack}
         onOpenTemplateSelector={onOpenTemplateSelector}
+        onOpenTechnique={onOpenExerciseTechnique}
         onStartWorkout={onStartWorkout}
         onContinueWorkout={onContinueWorkout}
         onOpenFullWorkout={onOpenFullWorkout}
@@ -2485,6 +2708,7 @@ function HomeView({
         onAddExercise={onAddFreeWorkoutExercise}
         onRemoveExercise={onRemoveFreeWorkoutExercise}
         onDragStart={onTemplateDragStart}
+        onOpenTechnique={onOpenExerciseTechnique}
         onStartWorkout={onStartFreeWorkout}
         onContinueWorkout={onContinueWorkout}
       />
@@ -2568,6 +2792,7 @@ function WorkoutPreparationScreen({
   workoutGroupId,
   onBack,
   onOpenTemplateSelector,
+  onOpenTechnique,
   onStartWorkout,
   onContinueWorkout,
   onOpenFullWorkout,
@@ -2646,9 +2871,16 @@ function WorkoutPreparationScreen({
               {plan.exercises.length ? (
                 <ol className="prep-exercise-list">
                   {plan.exercises.map((exercise) => (
-                    <li key={exercise.id} className={`prep-exercise-row${exercise.isMissing ? " is-missing" : ""}`}>
-                      <strong>{exercise.name}</strong>
-                      <span>{formatLastSetResult(exercise.lastSet)}</span>
+                    <li key={exercise.id} className="prep-exercise-item">
+                      <button
+                        className={`prep-exercise-row${exercise.isMissing ? " is-missing" : ""}`}
+                        type="button"
+                        aria-label={`Открыть технику ${exercise.name}`}
+                        onClick={() => onOpenTechnique(exercise)}
+                      >
+                        <strong>{exercise.name}</strong>
+                        <span>{formatLastSetResult(exercise.lastSet)}</span>
+                      </button>
                     </li>
                   ))}
                 </ol>
@@ -2676,6 +2908,7 @@ function FreeWorkoutPreparationScreen({
   onAddExercise,
   onRemoveExercise,
   onDragStart,
+  onOpenTechnique,
   onStartWorkout,
   onContinueWorkout,
 }) {
@@ -2698,6 +2931,7 @@ function FreeWorkoutPreparationScreen({
     return {
       id: exerciseId,
       name: exercise && !exercise.isArchived ? exercise.name : "Упражнение не найдено",
+      mediaUrl: exercise && !exercise.isArchived ? exercise.mediaUrl ?? "" : "",
       muscleGroupName: muscleGroup?.name ?? "Мышца",
       isMissing: !exercise || Boolean(exercise.isArchived),
     };
@@ -2751,6 +2985,7 @@ function FreeWorkoutPreparationScreen({
         onAddExercise={onAddExercise}
         onRemoveExercise={onRemoveExercise}
         onDragStart={onDragStart}
+        onOpenTechnique={onOpenTechnique}
       />
 
       <div className="prep-workout-actions">
@@ -2781,6 +3016,7 @@ function FreeWorkoutExerciseBuilder({
   onAddExercise,
   onRemoveExercise,
   onDragStart,
+  onOpenTechnique,
 }) {
   const shouldReduceMotion = useReducedMotion();
   const [baseSearchQueries, setBaseSearchQueries] = useState({});
@@ -2792,6 +3028,7 @@ function FreeWorkoutExerciseBuilder({
     ? { duration: 0 }
     : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
   const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения выше" : "Выбери группы мышц";
+  const techniqueLongPress = useExerciseTechniqueLongPress(onOpenTechnique);
   const filteredBaseSections = useMemo(
     () =>
       baseSections.map((section) => {
@@ -2907,7 +3144,14 @@ function FreeWorkoutExerciseBuilder({
                         className={`plan-row template-base-exercise-button${isBaseSelected ? " is-selected" : ""}`}
                         type="button"
                         aria-pressed={isBaseSelected}
-                        onClick={() => (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id))}
+                        onClick={() => {
+                          if (techniqueLongPress.shouldConsumeClick()) {
+                            return;
+                          }
+
+                          (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id));
+                        }}
+                        {...techniqueLongPress.getLongPressProps(exercise)}
                       >
                         <span className="template-choice-name">{exercise.name}</span>
                       </button>
@@ -2965,7 +3209,14 @@ function FreeWorkoutExerciseBuilder({
                   <span className="template-selected-number" data-selected-exercise-index data-selected-exercise-number>
                     {index + 1}
                   </span>
-                  <span className="template-selected-name">{exercise.name}</span>
+                  <button
+                    className="template-selected-name template-technique-trigger"
+                    type="button"
+                    aria-label={`Открыть технику ${exercise.name}`}
+                    onClick={() => onOpenTechnique(exercise)}
+                  >
+                    {exercise.name}
+                  </button>
                   <span className="template-selected-meta">{exercise.muscleGroupName}</span>
                   <button
                     className="template-remove-button"
@@ -3192,6 +3443,7 @@ function PlanView({
   onOpenExerciseGroup,
   onOpenExerciseCreate,
   onOpenExerciseEdit,
+  onOpenExerciseTechnique,
   onTemplateNameChange,
   onTemplateDefaultChange,
   onAddDraftExercise,
@@ -3200,6 +3452,7 @@ function PlanView({
   onSaveTemplate,
   onDeleteTemplate,
   onExerciseNameChange,
+  onExerciseMediaUrlChange,
   onSaveExercise,
   onDeleteExercise,
   onExportData,
@@ -3232,6 +3485,7 @@ function PlanView({
         onDragStart={onTemplateDragStart}
         onSave={onSaveTemplate}
         onDelete={onDeleteTemplate}
+        onOpenTechnique={onOpenExerciseTechnique}
       />
     );
   }
@@ -3244,6 +3498,7 @@ function PlanView({
         onBack={onBack}
         onCreate={onOpenExerciseCreate}
         onEdit={onOpenExerciseEdit}
+        onOpenTechnique={onOpenExerciseTechnique}
       />
     );
   }
@@ -3256,6 +3511,7 @@ function PlanView({
         draft={exerciseDraft}
         onBack={onBack}
         onNameChange={onExerciseNameChange}
+        onMediaUrlChange={onExerciseMediaUrlChange}
         onSave={onSaveExercise}
         onDelete={onDeleteExercise}
       />
@@ -3457,6 +3713,7 @@ function TemplateFormScreen({
   onDragStart,
   onSave,
   onDelete,
+  onOpenTechnique,
 }) {
   const details =
     planView.name === "editTemplate"
@@ -3507,6 +3764,7 @@ function TemplateFormScreen({
           onAddExercise={onAddExercise}
           onRemoveExercise={onRemoveExercise}
           onDragStart={onDragStart}
+          onOpenTechnique={onOpenTechnique}
         />
 
         <button className="action-button" type="submit">
@@ -3547,12 +3805,13 @@ function SearchField({ value, onChange, placeholder }) {
   );
 }
 
-function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, onRemoveExercise, onDragStart }) {
+function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, onRemoveExercise, onDragStart, onOpenTechnique }) {
   const [baseSearchQuery, setBaseSearchQuery] = useState("");
   const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState(null);
   const [removingExerciseIds, setRemovingExerciseIds] = useState(() => new Set());
   const addAnimationTimerRef = useRef(null);
   const removeAnimationTimersRef = useRef(new Map());
+  const techniqueLongPress = useExerciseTechniqueLongPress(onOpenTechnique);
   const selectedSet = new Set(selectedExerciseIds);
   const normalizedBaseSearchQuery = useMemo(() => normalizeSearchValue(baseSearchQuery), [baseSearchQuery]);
   const filteredBaseExercises = useMemo(() => {
@@ -3655,7 +3914,14 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                   <span className="template-selected-number" data-selected-exercise-index data-selected-exercise-number>
                     {index + 1}
                   </span>
-                  <span className="template-selected-name">{exercise.name}</span>
+                  <button
+                    className="template-selected-name template-technique-trigger"
+                    type="button"
+                    aria-label={`Открыть технику ${exercise.name}`}
+                    onClick={() => onOpenTechnique(exercise)}
+                  >
+                    {exercise.name}
+                  </button>
                   <button
                     className="template-remove-button"
                     type="button"
@@ -3692,7 +3958,14 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                     className={`plan-row template-base-exercise-button${isBaseSelected ? " is-selected" : ""}`}
                     type="button"
                     aria-pressed={isBaseSelected}
-                    onClick={() => (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id))}
+                    onClick={() => {
+                      if (techniqueLongPress.shouldConsumeClick()) {
+                        return;
+                      }
+
+                      (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id));
+                    }}
+                    {...techniqueLongPress.getLongPressProps(exercise)}
                   >
                     <span className="template-choice-name">{exercise.name}</span>
                   </button>
@@ -3708,7 +3981,7 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
   );
 }
 
-function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
+function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpenTechnique }) {
   const details = buildExercisesForMuscleGroup(data, muscleGroupId);
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
@@ -3734,7 +4007,15 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
           filteredExercises.map((exercise) => (
             <article key={exercise.id} className="template-card">
               <div className="template-card-topline">
-                <h2>{exercise.name}</h2>
+                <button
+                  className="exercise-card-title exercise-card-technique"
+                  type="button"
+                  aria-label={`Открыть технику ${exercise.name}`}
+                  onClick={() => onOpenTechnique(exercise)}
+                >
+                  <h2>{exercise.name}</h2>
+                  {exercise.mediaUrl ? <span>GIF добавлена</span> : null}
+                </button>
                 <EditIconButton
                   label={`Редактировать упражнение ${exercise.name}`}
                   onClick={() => onEdit(muscleGroupId, exercise.id)}
@@ -3756,7 +4037,42 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
   );
 }
 
-function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onSave, onDelete }) {
+function ExerciseGifPreview({ mediaUrl }) {
+  const previewUrl = mediaUrl?.trim() || "";
+  const [status, setStatus] = useState(previewUrl ? "loading" : "empty");
+
+  useEffect(() => {
+    setStatus(previewUrl ? "loading" : "empty");
+  }, [previewUrl]);
+
+  if (!previewUrl) {
+    return (
+      <div className="exercise-media-preview is-empty">
+        <span>GIF не добавлена</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`exercise-media-preview is-${status}`}>
+      {status !== "error" ? (
+        <img
+          key={previewUrl}
+          src={previewUrl}
+          alt="Предпросмотр GIF упражнения"
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setStatus("loaded")}
+          onError={() => setStatus("error")}
+        />
+      ) : null}
+      {status === "loading" ? <span className="gif-loading">Загрузка GIF</span> : null}
+      {status === "error" ? <span>Не удалось загрузить GIF. Проверьте ссылку.</span> : null}
+    </div>
+  );
+}
+
+function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMediaUrlChange, onSave, onDelete }) {
   const details =
     planView.name === "editExercise"
       ? buildExerciseEditingData(data, planView.exerciseId)
@@ -3787,6 +4103,24 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onSav
             История весов и повторов останется привязана к этому упражнению. Если это другое движение, создай новое упражнение вместо переименования.
           </p>
         ) : null}
+
+        <label className="form-field">
+          <span className="form-label-text">Ссылка на GIF-анимацию</span>
+          <input
+            className="form-input"
+            type="text"
+            name="exerciseMediaUrl"
+            value={draft.mediaUrl || ""}
+            placeholder="https://example.com/exercise.gif"
+            autoComplete="off"
+            onChange={onMediaUrlChange}
+          />
+        </label>
+
+        <div className="form-field">
+          <span className="form-label-text">Предпросмотр</span>
+          <ExerciseGifPreview mediaUrl={draft.mediaUrl} />
+        </div>
 
         <button className="action-button" type="submit">
           <span>Сохранить упражнение</span>
@@ -3940,6 +4274,66 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
         </section>
       ))}
     </section>
+  );
+}
+
+function ExerciseTechniqueSheet({ viewer, onClose }) {
+  const shouldReduceMotion = useReducedMotion();
+  const mediaUrl = viewer?.mediaUrl?.trim() || "";
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [mediaUrl]);
+
+  if (!viewer || !mediaUrl) {
+    return null;
+  }
+
+  return (
+    <motion.div
+      className="template-select-layer"
+      role="presentation"
+    >
+      <motion.button
+        className="template-select-backdrop"
+        type="button"
+        aria-label="Закрыть просмотр техники"
+        initial={shouldReduceMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetBackdropTransition}
+        onClick={onClose}
+      />
+      <motion.section
+        className="template-select-sheet exercise-technique-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Техника упражнения ${viewer.name}`}
+        initial={shouldReduceMotion ? false : { y: "100%" }}
+        animate={{ y: 0 }}
+        exit={shouldReduceMotion ? undefined : { y: "100%" }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
+      >
+        <div className="template-select-handle" aria-hidden="true" />
+        <div className="exercise-technique-header">
+          <h2>{viewer.name}</h2>
+        </div>
+        <div className={`exercise-technique-media${hasError ? " is-error" : ""}`}>
+          {!hasError ? (
+            <img
+              key={mediaUrl}
+              src={mediaUrl}
+              alt={`Техника упражнения ${viewer.name}`}
+              loading="lazy"
+              decoding="async"
+              onError={() => setHasError(true)}
+            />
+          ) : null}
+          {hasError ? <span>Не удалось загрузить GIF. Проверьте ссылку.</span> : null}
+        </div>
+      </motion.section>
+    </motion.div>
   );
 }
 
