@@ -63,6 +63,11 @@ const EXERCISE_TECHNIQUE_LONG_PRESS_MS = 520;
 const EXERCISE_TECHNIQUE_LONG_PRESS_MOVE_LIMIT = 10;
 const NOTICE_DURATION_MS = 2600;
 const MAX_VISIBLE_NOTICES = 3;
+const BOTTOM_SHEET_OVERLAYS = {
+  activeExerciseReplacement: "activeExerciseReplacement",
+  exerciseTechnique: "exerciseTechnique",
+  templateSelector: "templateSelector",
+};
 
 const screenMotionVariants = {
   initial: (mode) => {
@@ -228,6 +233,52 @@ function applyHistoryEntry(current, entry) {
   }
 
   return next;
+}
+
+function getOpenBottomSheetOverlay(state) {
+  if (state.exerciseTechniqueViewer) {
+    return BOTTOM_SHEET_OVERLAYS.exerciseTechnique;
+  }
+
+  if (state.activeExerciseReplacement) {
+    return BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement;
+  }
+
+  if (state.templateSelector) {
+    return BOTTOM_SHEET_OVERLAYS.templateSelector;
+  }
+
+  return null;
+}
+
+function closeBottomSheetState(state) {
+  return {
+    ...state,
+    activeExerciseReplacement: null,
+    exerciseTechniqueViewer: null,
+    templateSelector: null,
+  };
+}
+
+function createBottomSheetHistoryEntry(state, overlay) {
+  const entry = {
+    ...createHistoryEntry(state),
+    overlay,
+  };
+
+  if (overlay === BOTTOM_SHEET_OVERLAYS.templateSelector) {
+    entry.templateSelector = state.templateSelector;
+  }
+
+  if (overlay === BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement) {
+    entry.activeExerciseReplacement = state.activeExerciseReplacement;
+  }
+
+  if (overlay === BOTTOM_SHEET_OVERLAYS.exerciseTechnique) {
+    entry.exerciseTechniqueViewer = state.exerciseTechniqueViewer;
+  }
+
+  return entry;
 }
 
 function createNextState(current, patch) {
@@ -1029,6 +1080,22 @@ function App() {
     [patchState],
   );
 
+  const pushBottomSheetHistory = useCallback((overlay) => {
+    window.history.pushState(createBottomSheetHistoryEntry(stateRef.current, overlay), "");
+  }, []);
+
+  const closeBottomSheet = useCallback(
+    (overlay, patch) => {
+      if (window.history.state?.tag === HISTORY_TAG && window.history.state.overlay === overlay) {
+        window.history.back();
+        return;
+      }
+
+      patchState(patch);
+    },
+    [patchState],
+  );
+
   useEffect(() => {
     return () => {
       noticeTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
@@ -1052,13 +1119,14 @@ function App() {
           mediaUrl,
         },
       });
+      pushBottomSheetHistory(BOTTOM_SHEET_OVERLAYS.exerciseTechnique);
     },
-    [patchState, showNotice],
+    [patchState, pushBottomSheetHistory, showNotice],
   );
 
   const closeExerciseTechnique = useCallback(() => {
-    patchState({ exerciseTechniqueViewer: null });
-  }, [patchState]);
+    closeBottomSheet(BOTTOM_SHEET_OVERLAYS.exerciseTechnique, { exerciseTechniqueViewer: null });
+  }, [closeBottomSheet]);
 
   const refreshData = useCallback(async () => {
     const data = await loadAppData();
@@ -1162,6 +1230,20 @@ function App() {
       }
 
       saveCurrentScrollPosition();
+
+      const openOverlay = getOpenBottomSheetOverlay(stateRef.current);
+
+      if (openOverlay && !entry.overlay) {
+        const current = stateRef.current;
+        const next = closeBottomSheetState(current);
+        screenAnimationModeRef.current = getScreenAnimationMode(current, next);
+        stateRef.current = next;
+        setState(next);
+        window.history.replaceState(createHistoryEntry(next), "");
+        requestAnimationFrame(() => restoreScrollPosition(next));
+
+        return;
+      }
 
       const target = getLocalBackTarget(stateRef.current);
 
@@ -1450,11 +1532,12 @@ function App() {
 
   const openTemplateSelector = useCallback((muscleGroupId, workoutGroupId) => {
     patchState({ templateSelector: { muscleGroupId, workoutGroupId } });
-  }, [patchState]);
+    pushBottomSheetHistory(BOTTOM_SHEET_OVERLAYS.templateSelector);
+  }, [patchState, pushBottomSheetHistory]);
 
   const closeTemplateSelector = useCallback(() => {
-    patchState({ templateSelector: null });
-  }, [patchState]);
+    closeBottomSheet(BOTTOM_SHEET_OVERLAYS.templateSelector, { templateSelector: null });
+  }, [closeBottomSheet]);
 
   const selectWorkoutTemplate = useCallback(
     async (templateId) => {
@@ -1467,13 +1550,13 @@ function App() {
       try {
         await saveWorkoutGroupSelectedTemplate(selector.workoutGroupId, selector.muscleGroupId, templateId);
         await refreshData();
-        patchState({ templateSelector: null });
+        closeBottomSheet(BOTTOM_SHEET_OVERLAYS.templateSelector, { templateSelector: null });
       } catch (error) {
         console.error(error);
         showNotice("Не удалось выбрать шаблон", "error");
       }
     },
-    [patchState, refreshData, showNotice],
+    [closeBottomSheet, refreshData, showNotice],
   );
 
   const persistActiveWorkoutSession = useCallback(
@@ -1733,11 +1816,12 @@ function App() {
 
   const openExerciseReplacement = useCallback((exerciseIndex) => {
     patchState({ activeExerciseReplacement: { exerciseIndex } });
-  }, [patchState]);
+    pushBottomSheetHistory(BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement);
+  }, [patchState, pushBottomSheetHistory]);
 
   const closeExerciseReplacement = useCallback(() => {
-    patchState({ activeExerciseReplacement: null });
-  }, [patchState]);
+    closeBottomSheet(BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement, { activeExerciseReplacement: null });
+  }, [closeBottomSheet]);
 
   const selectReplacementExercise = useCallback(
     (exerciseId) => {
@@ -1803,9 +1887,9 @@ function App() {
         }),
       }), { showError: true });
 
-      patchState({ activeExerciseReplacement: null });
+      closeBottomSheet(BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement, { activeExerciseReplacement: null });
     },
-    [patchState, showNotice, updateActiveWorkoutSession],
+    [closeBottomSheet, showNotice, updateActiveWorkoutSession],
   );
 
   const handleActivePreviousExercise = useCallback(async () => {
