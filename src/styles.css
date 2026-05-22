@@ -1650,6 +1650,7 @@ h2 {
   color: var(--text);
   font-size: 15px;
   font-weight: 500;
+  user-select: none;
 }
 
 .free-workout-selected-item .template-selected-name {
