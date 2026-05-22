@@ -1869,6 +1869,7 @@ function App() {
             ...item,
             exerciseId: exercise.id,
             exerciseNameSnapshot: exercise.name,
+            mediaUrl: exercise.mediaUrl ?? "",
             plannedExerciseId,
             plannedExerciseNameSnapshot,
             trackingType: exercise.trackingType ?? item.trackingType,
@@ -2752,12 +2753,14 @@ function HomeView({
 
     return (
       <ActiveWorkoutScreen
+        data={data}
         session={session}
         onBack={onBack}
         onAddSet={onAddActiveSet}
         onRemoveSet={onRemoveActiveSet}
         onSetChange={onActiveSetChange}
         onOpenReplacement={onOpenExerciseReplacement}
+        onOpenTechnique={onOpenExerciseTechnique}
         onPreviousExercise={onActivePreviousExercise}
         onNextExercise={onActiveNextExercise}
         onFinish={onFinishActiveWorkout}
@@ -3323,12 +3326,14 @@ function FreeWorkoutExerciseBuilder({
 }
 
 function ActiveWorkoutScreen({
+  data,
   session,
   onBack,
   onAddSet,
   onRemoveSet,
   onSetChange,
   onOpenReplacement,
+  onOpenTechnique,
   onPreviousExercise,
   onNextExercise,
   onFinish,
@@ -3380,6 +3385,12 @@ function ActiveWorkoutScreen({
   const isLastExercise = currentIndex >= session.exerciseLogs.length - 1;
   const sets = exerciseLog.sets?.length ? exerciseLog.sets : [{ setNumber: 1, weightKg: "", reps: "" }];
   const canRemoveSet = sets.length > 1;
+  const exerciseFromBase = data?.exercises?.find((exercise) => exercise.id === exerciseLog.exerciseId) ?? null;
+  const exerciseMediaUrl = (exerciseLog.mediaUrl || exerciseFromBase?.mediaUrl || "").trim();
+  const techniqueExercise = {
+    name: exerciseLog.exerciseNameSnapshot,
+    mediaUrl: exerciseMediaUrl,
+  };
 
   return (
     <section className="screen active-workout-screen">
@@ -3397,13 +3408,24 @@ function ActiveWorkoutScreen({
           <p className="active-exercise-title">
             Упражнение {exerciseLog.exerciseNameSnapshot}
           </p>
-          <button
-            className="action-button secondary-action active-replace-button"
-            type="button"
-            onClick={() => onOpenReplacement(currentIndex)}
-          >
-            <span>Заменить упражнение</span>
-          </button>
+          <div className="active-exercise-actions">
+            <button
+              className="action-button secondary-action active-replace-button"
+              type="button"
+              onClick={() => onOpenReplacement(currentIndex)}
+            >
+              <span>Заменить упражнение</span>
+            </button>
+            {exerciseMediaUrl ? (
+              <button
+                className="action-button secondary-action active-technique-button"
+                type="button"
+                onClick={() => onOpenTechnique(techniqueExercise)}
+              >
+                <span>Показать технику</span>
+              </button>
+            ) : null}
+          </div>
         </header>
 
         <section className="panel active-exercise-panel">

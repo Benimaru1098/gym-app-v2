@@ -578,6 +578,7 @@ export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, 
       return {
         id: exerciseId,
         name: exercise && !exercise.isArchived ? exercise.name : "Упражнение не найдено",
+        mediaUrl: exercise && !exercise.isArchived ? exercise.mediaUrl ?? "" : "",
         muscleGroupId,
         muscleGroupNameSnapshot: muscleGroup.name,
         trackingType: exercise?.trackingType ?? "weight_reps",
@@ -606,6 +607,7 @@ export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, 
       exerciseLogs.push({
         exerciseId: exercise.id,
         exerciseNameSnapshot: exercise.name,
+        mediaUrl: exercise.mediaUrl ?? "",
         plannedExerciseId: exercise.id,
         plannedExerciseNameSnapshot: exercise.name,
         muscleGroupId,
@@ -691,6 +693,7 @@ export function buildFreeWorkoutSessionDraft(data, selectedExerciseIds, sessionI
     exerciseLogs.push({
       exerciseId: exercise.id,
       exerciseNameSnapshot: exercise.name,
+      mediaUrl: exercise.mediaUrl ?? "",
       plannedExerciseId: exercise.id,
       plannedExerciseNameSnapshot: exercise.name,
       muscleGroupId: muscleGroup.id,
