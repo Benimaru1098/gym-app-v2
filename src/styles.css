@@ -459,17 +459,18 @@ h2 {
 }
 
 .template-select-sheet {
+  --bottom-sheet-skirt: 34px;
   position: absolute;
   right: 0;
-  bottom: 0;
+  bottom: calc(0px - var(--bottom-sheet-skirt));
   left: 0;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
   max-width: 560px;
-  height: min(72dvh, 530px);
+  height: calc(min(72dvh, 530px) + var(--bottom-sheet-skirt));
   margin: 0 auto;
-  padding: 14px 14px calc(16px + env(safe-area-inset-bottom));
+  padding: 14px 14px calc(16px + env(safe-area-inset-bottom) + var(--bottom-sheet-skirt));
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-bottom: 0;
@@ -479,12 +480,29 @@ h2 {
 }
 
 .template-select-handle {
+  display: grid;
+  place-items: center;
   justify-self: center;
+  width: 86px;
+  height: 22px;
+  margin: -4px 0 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+.template-select-handle::before {
   width: 52px;
   height: 5px;
   border-radius: 999px;
   background: var(--muted);
-  margin-bottom: 10px;
+  content: "";
+}
+
+.template-select-handle:active {
+  cursor: grabbing;
 }
 
 .template-select-option {
@@ -549,7 +567,7 @@ h2 {
 }
 
 .exercise-technique-sheet {
-  height: min(76dvh, 450px);
+  height: calc(min(76dvh, 450px) + var(--bottom-sheet-skirt));
 }
 
 .exercise-technique-header {

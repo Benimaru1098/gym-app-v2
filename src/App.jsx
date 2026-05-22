@@ -1,4 +1,4 @@
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, LayoutGroup, motion, useDragControls, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearWorkoutLogs,
@@ -98,6 +98,12 @@ const bottomSheetTransition = {
   duration: 0.22,
   ease: [0.22, 1, 0.36, 1],
 };
+
+const BOTTOM_SHEET_DRAG_CLOSE_RATIO = 0.4;
+const BOTTOM_SHEET_DRAG_LIMIT_RATIO = 0.46;
+const BOTTOM_SHEET_DRAG_UP_LIMIT = 18;
+const BOTTOM_SHEET_DRAG_MIN_LIMIT = 120;
+const BOTTOM_SHEET_DRAG_VELOCITY_CLOSE = 900;
 
 const secondaryScreenTransition = {
   duration: 0.24,
@@ -4383,8 +4389,104 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
   );
 }
 
-function ExerciseTechniqueSheet({ viewer, onClose }) {
+function BottomSheet({ ariaLabel, backdropLabel, className = "", onClose, children }) {
   const shouldReduceMotion = useReducedMotion();
+  const dragControls = useDragControls();
+  const sheetRef = useRef(null);
+  const [dragLimit, setDragLimit] = useState(BOTTOM_SHEET_DRAG_MIN_LIMIT);
+
+  const updateDragLimit = useCallback(() => {
+    const sheetHeight = sheetRef.current?.getBoundingClientRect().height ?? 0;
+    if (!sheetHeight) {
+      return;
+    }
+
+    setDragLimit(
+      Math.max(
+        BOTTOM_SHEET_DRAG_MIN_LIMIT,
+        Math.round(sheetHeight * BOTTOM_SHEET_DRAG_LIMIT_RATIO),
+      ),
+    );
+  }, []);
+
+  useEffect(() => {
+    updateDragLimit();
+    window.addEventListener("resize", updateDragLimit);
+
+    return () => {
+      window.removeEventListener("resize", updateDragLimit);
+    };
+  }, [updateDragLimit]);
+
+  const handleDragStart = useCallback(
+    (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+
+      dragControls.start(event);
+    },
+    [dragControls],
+  );
+
+  const handleDragEnd = useCallback(
+    (_, info) => {
+      const sheetHeight = sheetRef.current?.getBoundingClientRect().height ?? dragLimit;
+      const closeDistance = sheetHeight * BOTTOM_SHEET_DRAG_CLOSE_RATIO;
+      const shouldClose =
+        info.offset.y >= closeDistance ||
+        (info.velocity.y >= BOTTOM_SHEET_DRAG_VELOCITY_CLOSE && info.offset.y > 32);
+
+      if (shouldClose) {
+        onClose();
+      }
+    },
+    [dragLimit, onClose],
+  );
+
+  return (
+    <motion.div className="template-select-layer" role="presentation">
+      <motion.button
+        className="template-select-backdrop"
+        type="button"
+        aria-label={backdropLabel}
+        initial={shouldReduceMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetBackdropTransition}
+        onClick={onClose}
+      />
+      <motion.section
+        ref={sheetRef}
+        className={`template-select-sheet${className ? ` ${className}` : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        initial={shouldReduceMotion ? false : { y: "100%" }}
+        animate={{ y: 0 }}
+        exit={shouldReduceMotion ? undefined : { y: "100%" }}
+        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
+        drag="y"
+        dragControls={dragControls}
+        dragConstraints={{ top: -BOTTOM_SHEET_DRAG_UP_LIMIT, bottom: dragLimit }}
+        dragElastic={0.02}
+        dragListener={false}
+        dragMomentum={false}
+        dragSnapToOrigin
+        onDragEnd={handleDragEnd}
+      >
+        <div
+          className="template-select-handle"
+          aria-hidden="true"
+          onPointerDown={handleDragStart}
+        />
+        {children}
+      </motion.section>
+    </motion.div>
+  );
+}
+
+function ExerciseTechniqueSheet({ viewer, onClose }) {
   const mediaUrl = viewer?.mediaUrl?.trim() || "";
   const [hasError, setHasError] = useState(false);
 
@@ -4397,54 +4499,33 @@ function ExerciseTechniqueSheet({ viewer, onClose }) {
   }
 
   return (
-    <motion.div
-      className="template-select-layer"
-      role="presentation"
+    <BottomSheet
+      className="exercise-technique-sheet"
+      ariaLabel={`Техника упражнения ${viewer.name}`}
+      backdropLabel="Закрыть просмотр техники"
+      onClose={onClose}
     >
-      <motion.button
-        className="template-select-backdrop"
-        type="button"
-        aria-label="Закрыть просмотр техники"
-        initial={shouldReduceMotion ? false : { opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
-        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetBackdropTransition}
-        onClick={onClose}
-      />
-      <motion.section
-        className="template-select-sheet exercise-technique-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Техника упражнения ${viewer.name}`}
-        initial={shouldReduceMotion ? false : { y: "100%" }}
-        animate={{ y: 0 }}
-        exit={shouldReduceMotion ? undefined : { y: "100%" }}
-        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
-      >
-        <div className="template-select-handle" aria-hidden="true" />
-        <div className="exercise-technique-header">
-          <h2>{viewer.name}</h2>
-        </div>
-        <div className={`exercise-technique-media${hasError ? " is-error" : ""}`}>
-          {!hasError ? (
-            <img
-              key={mediaUrl}
-              src={mediaUrl}
-              alt={`Техника упражнения ${viewer.name}`}
-              loading="lazy"
-              decoding="async"
-              onError={() => setHasError(true)}
-            />
-          ) : null}
-          {hasError ? <span>Не удалось загрузить GIF. Проверьте ссылку.</span> : null}
-        </div>
-      </motion.section>
-    </motion.div>
+      <div className="exercise-technique-header">
+        <h2>{viewer.name}</h2>
+      </div>
+      <div className={`exercise-technique-media${hasError ? " is-error" : ""}`}>
+        {!hasError ? (
+          <img
+            key={mediaUrl}
+            src={mediaUrl}
+            alt={`Техника упражнения ${viewer.name}`}
+            loading="lazy"
+            decoding="async"
+            onError={() => setHasError(true)}
+          />
+        ) : null}
+        {hasError ? <span>Не удалось загрузить GIF. Проверьте ссылку.</span> : null}
+      </div>
+    </BottomSheet>
   );
 }
 
 function TemplateSelector({ data, selector, onClose, onSelect }) {
-  const shouldReduceMotion = useReducedMotion();
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
   const details = useMemo(
@@ -4470,58 +4551,36 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
     : null;
 
   return (
-    <motion.div
-      className="template-select-layer"
-      role="presentation"
+    <BottomSheet
+      ariaLabel="Выбор шаблона"
+      backdropLabel="Закрыть выбор шаблона"
+      onClose={onClose}
     >
-      <motion.button
-        className="template-select-backdrop"
-        type="button"
-        aria-label="Закрыть выбор шаблона"
-        initial={shouldReduceMotion ? false : { opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
-        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetBackdropTransition}
-        onClick={onClose}
-      />
-      <motion.section
-        className="template-select-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Выбор шаблона"
-        initial={shouldReduceMotion ? false : { y: "100%" }}
-        animate={{ y: 0 }}
-        exit={shouldReduceMotion ? undefined : { y: "100%" }}
-        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
-      >
-        <div className="template-select-handle" aria-hidden="true" />
-        <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск шаблона" />
-        <div className="template-select-list">
-          {filteredTemplates.length ? (
-            filteredTemplates.map((template) => (
-              <button
-                key={template.id}
-                className={`template-select-option${template.id === selectedTemplateId ? " is-selected" : ""}`}
-                type="button"
-                onClick={() => onSelect(template.id)}
-              >
-                <span>{template.name}</span>
-                {template.id === selectedTemplateId ? <span className="template-select-check" aria-hidden="true">✓</span> : null}
-              </button>
-            ))
-          ) : (
-            <div className="empty-state compact-empty-state">
-              <h2>{emptyText}</h2>
-            </div>
-          )}
-        </div>
-      </motion.section>
-    </motion.div>
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск шаблона" />
+      <div className="template-select-list">
+        {filteredTemplates.length ? (
+          filteredTemplates.map((template) => (
+            <button
+              key={template.id}
+              className={`template-select-option${template.id === selectedTemplateId ? " is-selected" : ""}`}
+              type="button"
+              onClick={() => onSelect(template.id)}
+            >
+              <span>{template.name}</span>
+              {template.id === selectedTemplateId ? <span className="template-select-check" aria-hidden="true">✓</span> : null}
+            </button>
+          ))
+        ) : (
+          <div className="empty-state compact-empty-state">
+            <h2>{emptyText}</h2>
+          </div>
+        )}
+      </div>
+    </BottomSheet>
   );
 }
 
 function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSelect }) {
-  const shouldReduceMotion = useReducedMotion();
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
   const exerciseLog = selector && session ? session.exerciseLogs?.[selector.exerciseIndex] : null;
@@ -4570,67 +4629,46 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
   }
 
   return (
-    <motion.div
-      className="template-select-layer"
-      role="presentation"
+    <BottomSheet
+      ariaLabel="Замена упражнения"
+      backdropLabel="Закрыть выбор упражнения"
+      onClose={onClose}
     >
-      <motion.button
-        className="template-select-backdrop"
-        type="button"
-        aria-label="Закрыть выбор упражнения"
-        initial={shouldReduceMotion ? false : { opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
-        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetBackdropTransition}
-        onClick={onClose}
-      />
-      <motion.section
-        className="template-select-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Замена упражнения"
-        initial={shouldReduceMotion ? false : { y: "100%" }}
-        animate={{ y: 0 }}
-        exit={shouldReduceMotion ? undefined : { y: "100%" }}
-        transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
-      >
-        <div className="template-select-handle" aria-hidden="true" />
-        <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск упражнения" />
-        <div className="template-select-list">
-          {filteredExercises.length ? (
-            filteredExercises.map((exercise) => {
-              const isDisabled = exercise.isCurrent || exercise.isUsedInWorkout;
-              const status = exercise.isCurrent
-                ? "Текущее"
-                : exercise.isUsedInWorkout
-                  ? exercise.isInPlan
-                    ? "В плане"
-                    : "Уже выбрано"
-                  : exercise.isInPlan
-                    ? "По плану"
-                    : null;
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск упражнения" />
+      <div className="template-select-list">
+        {filteredExercises.length ? (
+          filteredExercises.map((exercise) => {
+            const isDisabled = exercise.isCurrent || exercise.isUsedInWorkout;
+            const status = exercise.isCurrent
+              ? "Текущее"
+              : exercise.isUsedInWorkout
+                ? exercise.isInPlan
+                  ? "В плане"
+                  : "Уже выбрано"
+                : exercise.isInPlan
+                  ? "По плану"
+                  : null;
 
-              return (
-                <button
-                  key={exercise.id}
-                  className={`template-select-option${exercise.isCurrent ? " is-selected" : ""}`}
-                  type="button"
-                  disabled={isDisabled}
-                  onClick={() => onSelect(exercise.id)}
-                >
-                  <span>{exercise.name}</span>
-                  {status ? <span className="template-select-check">{status}</span> : null}
-                </button>
-              );
-            })
-          ) : (
-            <div className="empty-state compact-empty-state">
-              <h2>{emptyText}</h2>
-            </div>
-          )}
-        </div>
-      </motion.section>
-    </motion.div>
+            return (
+              <button
+                key={exercise.id}
+                className={`template-select-option${exercise.isCurrent ? " is-selected" : ""}`}
+                type="button"
+                disabled={isDisabled}
+                onClick={() => onSelect(exercise.id)}
+              >
+                <span>{exercise.name}</span>
+                {status ? <span className="template-select-check">{status}</span> : null}
+              </button>
+            );
+          })
+        ) : (
+          <div className="empty-state compact-empty-state">
+            <h2>{emptyText}</h2>
+          </div>
+        )}
+      </div>
+    </BottomSheet>
   );
 }
 
