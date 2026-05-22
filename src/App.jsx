@@ -2840,7 +2840,7 @@ function HomeView({
 function WorkoutCard({ card, illustrationIndex, imageSrc, onOpen }) {
   const nameParts =
     card.workoutGroup.id === FREE_WORKOUT_GROUP_ID
-      ? ["Всё", "Тело"]
+      ? ["Свой", "План"]
       : card.workoutGroup.name.split("+").map((part) => part.trim()).filter(Boolean);
   const lastDoneLabel = formatLastWorkoutLabel(card.lastWorkoutDate);
 

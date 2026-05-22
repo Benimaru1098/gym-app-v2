@@ -1,7 +1,7 @@
 import { isProtectedTemplate } from "./templateRules.js";
 
 export const FREE_WORKOUT_GROUP_ID = "free-full-body";
-export const FREE_WORKOUT_NAME = "Всё Тело";
+export const FREE_WORKOUT_NAME = "Свой план";
 
 export function indexById(items) {
   return new Map(items.map((item) => [item.id, item]));
