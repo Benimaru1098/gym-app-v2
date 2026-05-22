@@ -3120,7 +3120,7 @@ function FreeWorkoutExerciseBuilder({
   const baseSectionTransition = shouldReduceMotion
     ? { duration: 0 }
     : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
-  const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения выше" : "Выбери группы мышц";
+  const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения ниже" : "Выбери группы мышц";
   const techniqueLongPress = useExerciseTechniqueLongPress(onOpenTechnique);
   const filteredBaseSections = useMemo(
     () =>
@@ -3202,64 +3202,6 @@ function FreeWorkoutExerciseBuilder({
 
   return (
     <LayoutGroup id="free-workout-builder">
-      <AnimatePresence initial={false} mode="popLayout">
-        {hasSelectedMuscleGroups ? (
-          filteredBaseSections.map((section) => (
-            <motion.section
-              key={section.muscleGroup.id}
-              layout
-              className="panel plan-section template-builder-section"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={baseSectionTransition}
-            >
-            <div className="section-title">
-              <span>{section.muscleGroup.name}</span>
-              <span>База упражнений</span>
-            </div>
-            <SearchField
-              value={section.searchQuery}
-              onChange={(value) => handleBaseSearchChange(section.muscleGroup.id, value)}
-              placeholder="Поиск упражнения"
-            />
-            <div className="template-builder-scroll free-workout-base-scroll">
-              {section.filteredExercises.length ? (
-                <div className="template-base-list">
-                  {section.filteredExercises.map((exercise) => {
-                    const isSelected = selectedExerciseSet.has(exercise.id);
-                    const isRemoving = removingExerciseIds.has(exercise.id);
-                    const isBaseSelected = isSelected && !isRemoving;
-
-                    return (
-                      <button
-                        key={exercise.id}
-                        className={`plan-row template-base-exercise-button${isBaseSelected ? " is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={isBaseSelected}
-                        onClick={() => {
-                          if (techniqueLongPress.shouldConsumeClick()) {
-                            return;
-                          }
-
-                          (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id));
-                        }}
-                        {...techniqueLongPress.getLongPressProps(exercise)}
-                      >
-                        <span className="template-choice-name">{exercise.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="template-builder-empty">{section.emptyText}</div>
-              )}
-            </div>
-            </motion.section>
-          ))
-        ) : null}
-      </AnimatePresence>
-
       <motion.section
         layout
         className="panel plan-section template-builder-section"
@@ -3327,6 +3269,64 @@ function FreeWorkoutExerciseBuilder({
           )}
         </div>
       </motion.section>
+
+      <AnimatePresence initial={false} mode="popLayout">
+        {hasSelectedMuscleGroups ? (
+          filteredBaseSections.map((section) => (
+            <motion.section
+              key={section.muscleGroup.id}
+              layout
+              className="panel plan-section template-builder-section"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={baseSectionTransition}
+            >
+              <div className="section-title">
+                <span>{section.muscleGroup.name}</span>
+                <span>База упражнений</span>
+              </div>
+              <SearchField
+                value={section.searchQuery}
+                onChange={(value) => handleBaseSearchChange(section.muscleGroup.id, value)}
+                placeholder="Поиск упражнения"
+              />
+              <div className="template-builder-scroll free-workout-base-scroll">
+                {section.filteredExercises.length ? (
+                  <div className="template-base-list">
+                    {section.filteredExercises.map((exercise) => {
+                      const isSelected = selectedExerciseSet.has(exercise.id);
+                      const isRemoving = removingExerciseIds.has(exercise.id);
+                      const isBaseSelected = isSelected && !isRemoving;
+
+                      return (
+                        <button
+                          key={exercise.id}
+                          className={`plan-row template-base-exercise-button${isBaseSelected ? " is-selected" : ""}`}
+                          type="button"
+                          aria-pressed={isBaseSelected}
+                          onClick={() => {
+                            if (techniqueLongPress.shouldConsumeClick()) {
+                              return;
+                            }
+
+                            (isSelected ? runRemoveExercise(exercise.id) : runAddExercise(exercise.id));
+                          }}
+                          {...techniqueLongPress.getLongPressProps(exercise)}
+                        >
+                          <span className="template-choice-name">{exercise.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="template-builder-empty">{section.emptyText}</div>
+                )}
+              </div>
+            </motion.section>
+          ))
+        ) : null}
+      </AnimatePresence>
     </LayoutGroup>
   );
 }
