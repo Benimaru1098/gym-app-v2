@@ -3120,7 +3120,7 @@ function FreeWorkoutExerciseBuilder({
   const baseSectionTransition = shouldReduceMotion
     ? { duration: 0 }
     : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
-  const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения ниже" : "Выбери группы мышц";
+  const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения ниже" : "Выбери группы мышц выше";
   const techniqueLongPress = useExerciseTechniqueLongPress(onOpenTechnique);
   const filteredBaseSections = useMemo(
     () =>
