@@ -38,6 +38,7 @@ import {
   getSelectedTemplateIdForMuscleGroup,
   indexById,
 } from "./domain/selectors.js";
+import { buildProgressionAdvice } from "./domain/progressionAdvice.js";
 import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
 import { icon } from "./ui/icons.js";
 import editIconSrc from "./assets/icons/edit.svg";
@@ -425,12 +426,12 @@ function formatWeightValue(weightKg) {
   return Number.isInteger(weight) ? String(weight) : String(weight).replace(".", ",");
 }
 
-function formatLastSetResult(lastSet) {
-  if (!lastSet) {
+function formatLastSetsResult(lastSets) {
+  if (!lastSets?.length) {
     return "последний: ещё не было";
   }
 
-  return `последний: ${formatWeightValue(lastSet.weightKg)}×${lastSet.reps}`;
+  return `последний: ${formatSetList(lastSets)}`;
 }
 
 function normalizeSearchValue(value) {
@@ -2972,7 +2973,7 @@ function WorkoutPreparationScreen({
                         onClick={() => onOpenTechnique(exercise)}
                       >
                         <strong>{exercise.name}</strong>
-                        <span>{formatLastSetResult(exercise.lastSet)}</span>
+                        <span>{formatLastSetsResult(exercise.lastSets)}</span>
                       </button>
                     </li>
                   ))}
@@ -3397,6 +3398,11 @@ function ActiveWorkoutScreen({
     name: exerciseLog.exerciseNameSnapshot,
     mediaUrl: exerciseMediaUrl,
   };
+  const progressionAdvice = buildProgressionAdvice({
+    data,
+    session,
+    exerciseIndex: currentIndex,
+  });
 
   return (
     <section className="screen active-workout-screen">
@@ -3437,6 +3443,12 @@ function ActiveWorkoutScreen({
         <section className="panel active-exercise-panel">
           <p className="active-previous-sets">
             <span>Прошлый раз:</span> <strong>{formatSetList(exerciseLog.previousSets)}</strong>
+          </p>
+        </section>
+
+        <section className="panel active-exercise-panel">
+          <p className="active-previous-sets">
+            <span>Совет:</span> <strong>{progressionAdvice.text}</strong>
           </p>
         </section>
 
@@ -4378,7 +4390,7 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
                     ))}
                   </ol>
                 ) : (
-                  <p className="journal-empty-sets">Подходы не записаны</p>
+                  <p className="journal-empty-sets">Подходы не выполнены</p>
                 )}
               </article>
             ))}

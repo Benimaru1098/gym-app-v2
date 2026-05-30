@@ -994,10 +994,35 @@ export async function clearWorkoutLogs() {
 
   try {
     const metadata = await readMetadata(database);
-    const transaction = database.transaction(["metadata", "workoutLogs"], "readwrite");
+    const exercises = await readStore(database, "exercises");
+    const templates = await readStore(database, "exerciseTemplates");
+    const transaction = database.transaction(
+      ["metadata", "workoutLogs", "exercises", "exerciseTemplates"],
+      "readwrite",
+    );
     const done = transactionDone(transaction);
+    const exerciseStore = transaction.objectStore("exercises");
+    const templateStore = transaction.objectStore("exerciseTemplates");
 
     transaction.objectStore("workoutLogs").clear();
+
+    for (const exercise of exercises) {
+      if (Number(exercise.usageCount ?? 0) > 0) {
+        exerciseStore.put({
+          ...exercise,
+          usageCount: 0,
+        });
+      }
+    }
+
+    for (const template of templates) {
+      if (Number(template.usageCount ?? 0) > 0) {
+        templateStore.put({
+          ...template,
+          usageCount: 0,
+        });
+      }
+    }
 
     transaction.objectStore("metadata").put({
       id: "app",

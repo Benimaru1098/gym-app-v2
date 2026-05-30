@@ -1136,10 +1136,6 @@ h2 {
   gap: 9px;
 }
 
-.active-next-button {
-  margin-top: 2px;
-}
-
 .compact-empty-state {
   min-height: 92px;
   padding: 16px;

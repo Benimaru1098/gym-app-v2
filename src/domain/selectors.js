@@ -84,12 +84,6 @@ function collectExerciseLogEntries(value) {
   return entries;
 }
 
-function getLastSetForExercise(data, exerciseId) {
-  const lastSets = getLastSetsForExercise(data, exerciseId);
-
-  return lastSets[lastSets.length - 1] ?? null;
-}
-
 export function getLastSetsForExercise(data, exerciseId) {
   const logsByDate = data.workoutLogs
     .map((log) => ({
@@ -528,7 +522,7 @@ function buildTemplateExerciseItems(data, template, exercisesById) {
       name: !isMissing ? exercise.name : "Упражнение не найдено",
       mediaUrl: !isMissing ? exercise.mediaUrl ?? "" : "",
       isMissing,
-      lastSet: getLastSetForExercise(data, exerciseId),
+      lastSets: getLastSetsForExercise(data, exerciseId),
     };
   });
 }
