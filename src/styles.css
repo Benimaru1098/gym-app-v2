@@ -1036,32 +1036,33 @@ h2 {
 
 .active-set-row {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr) 32px;
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1fr) 20px;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 
 .active-set-number {
+  justify-self: center;
   color: var(--muted);
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .active-set-input {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 0;
   min-width: 0;
   min-height: 45px;
-  padding: 8px 9px;
+  padding: 6px 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-3);
 }
 
 .active-set-input input {
-  width: 100%;
-  min-width: 0;
+  width: 48px;
+  text-align: center;
   border: 0;
   outline: 0;
   background: transparent;
@@ -1071,22 +1072,51 @@ h2 {
   font-weight: 600;
 }
 
+.active-set-input.input-pw input {
+  width: 30px;
+}
+
+.active-set-step-button {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0;
+  touch-action: manipulation;
+}
+
+.active-set-step-button.plus-kg,
+.active-set-step-button.plus-pw {
+  margin-left: 4px;
+}
+
 .active-set-input input::placeholder {
   color: var(--muted-2);
 }
 
 .active-set-input span {
   flex: 0 0 auto;
+  margin-left: auto;
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
+  padding-right: 5px;
 }
 
 .active-set-remove-button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 32px;
+  justify-self: center;
+  width: 24px;
   height: 32px;
   border: 0;
   border-radius: 8px;
@@ -1098,7 +1128,7 @@ h2 {
 .active-set-remove-button::before,
 .active-set-remove-button::after {
   position: absolute;
-  width: 15px;
+  width: 14px;
   height: 2px;
   border-radius: 999px;
   background: currentColor;

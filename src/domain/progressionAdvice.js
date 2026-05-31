@@ -257,6 +257,14 @@ function inferWeightStep(history, workingWeight) {
   return workingWeight <= 15 ? 1 : 2.5;
 }
 
+export function getProgressionWeightStep({ data, exerciseId, fallbackWeight = 0 }) {
+  const history = exerciseId ? collectExerciseHistory(data, exerciseId) : [];
+  const fallback = parseWeightKg(fallbackWeight) ?? 0;
+  const workingWeight = history[0]?.workingWeight ?? fallback;
+
+  return inferWeightStep(history, workingWeight);
+}
+
 function roundWeightToStep(weight, step) {
   return Number((Math.round(weight / step) * step).toFixed(2));
 }
