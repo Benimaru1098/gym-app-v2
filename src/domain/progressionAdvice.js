@@ -241,8 +241,8 @@ function inferStepFromWeights(weights) {
     return null;
   }
 
-  const [step, count] = inferredStepEntry;
-  return count >= 2 || step <= 5 ? step : null;
+  const [step] = inferredStepEntry;
+  return step;
 }
 
 function inferWeightStep(history, workingWeight) {

@@ -850,6 +850,11 @@ h2 {
   margin-bottom: 0px;
 }
 
+.journal-detail-actions {
+  display: grid;
+  margin-top: 2px;
+}
+
 .journal-muscle-header {
   display: flex;
   align-items: center;
@@ -1162,8 +1167,9 @@ h2 {
 }
 
 .active-navigation-actions {
-  display: grid;
-  gap: 9px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
 .compact-empty-state {

@@ -818,6 +818,37 @@ function normalizeCompletedSets(sets = []) {
     .filter((set) => set.weightKg !== null || set.reps !== null);
 }
 
+function getWorkoutLogExerciseIds(log) {
+  const exerciseIds = new Set();
+  const addExerciseLog = (exerciseLog) => {
+    if (typeof exerciseLog?.exerciseId === "string" && exerciseLog.exerciseId) {
+      exerciseIds.add(exerciseLog.exerciseId);
+    }
+  };
+
+  (log.exerciseLogs ?? []).forEach(addExerciseLog);
+  (log.muscleGroupLogs ?? []).forEach((muscleGroupLog) => {
+    (muscleGroupLog.exerciseLogs ?? []).forEach(addExerciseLog);
+  });
+
+  return exerciseIds;
+}
+
+function getWorkoutLogTemplateIds(log) {
+  const templateIds = new Set();
+  const addTemplateId = (templateId) => {
+    if (typeof templateId === "string" && templateId) {
+      templateIds.add(templateId);
+    }
+  };
+
+  (log.templateSnapshots ?? []).forEach((template) => addTemplateId(template.id));
+  (log.muscleGroupLogs ?? []).forEach((muscleGroupLog) => addTemplateId(muscleGroupLog.templateId));
+  (log.exerciseLogs ?? []).forEach((exerciseLog) => addTemplateId(exerciseLog.templateId));
+
+  return templateIds;
+}
+
 function createWorkoutLogFromSession(session, completedAt) {
   const exerciseLogs = (session.exerciseLogs ?? []).map((exerciseLog) => ({
     exerciseId: exerciseLog.exerciseId,
@@ -984,6 +1015,70 @@ export async function finishActiveWorkoutSession(session) {
 
     await done;
     return workoutLog;
+  } finally {
+    database.close();
+  }
+}
+
+export async function deleteWorkoutLog(workoutLogId) {
+  const database = await openAppDatabase();
+
+  try {
+    const metadata = await readMetadata(database);
+    const workoutLogs = await readStore(database, "workoutLogs");
+    const exercises = await readStore(database, "exercises");
+    const templates = await readStore(database, "exerciseTemplates");
+    const workoutLog = workoutLogs.find((item) => item.id === workoutLogId);
+
+    if (!workoutLog) {
+      return { status: "missing" };
+    }
+
+    const usedExerciseIds = getWorkoutLogExerciseIds(workoutLog);
+    const usedTemplateIds = getWorkoutLogTemplateIds(workoutLog);
+    const now = new Date().toISOString();
+    const transaction = database.transaction(
+      ["metadata", "workoutLogs", "exercises", "exerciseTemplates"],
+      "readwrite",
+    );
+    const done = transactionDone(transaction);
+    const exerciseStore = transaction.objectStore("exercises");
+    const templateStore = transaction.objectStore("exerciseTemplates");
+
+    transaction.objectStore("workoutLogs").delete(workoutLog.id);
+
+    for (const exercise of exercises) {
+      if (usedExerciseIds.has(exercise.id) && Number(exercise.usageCount ?? 0) > 0) {
+        exerciseStore.put({
+          ...exercise,
+          usageCount: Math.max(0, Number(exercise.usageCount ?? 0) - 1),
+        });
+      }
+    }
+
+    for (const template of templates) {
+      if (usedTemplateIds.has(template.id) && Number(template.usageCount ?? 0) > 0) {
+        templateStore.put({
+          ...template,
+          usageCount: Math.max(0, Number(template.usageCount ?? 0) - 1),
+        });
+      }
+    }
+
+    transaction.objectStore("metadata").put({
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: metadata?.createdAt ?? now,
+      updatedAt: now,
+    });
+
+    await done;
+
+    return {
+      status: "deleted",
+      exerciseCount: usedExerciseIds.size,
+      templateCount: usedTemplateIds.size,
+    };
   } finally {
     database.close();
   }

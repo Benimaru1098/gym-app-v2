@@ -5,6 +5,7 @@ import {
   deleteActiveWorkoutSessionsForWorkoutGroup,
   deleteExercise,
   deleteExerciseTemplate,
+  deleteWorkoutLog,
   exportAppData,
   finishActiveWorkoutSession,
   importAppData,
@@ -565,15 +566,31 @@ function getMaxActiveSetWeight(sets) {
 }
 
 function adjustActiveWeightValue(value, direction, step) {
-  const currentValue = parseActiveWeightValue(value) ?? 0;
+  const parsedValue = parseActiveWeightValue(value);
+  if (parsedValue === null && direction < 0) {
+    return "";
+  }
+
+  const currentValue = parsedValue ?? 0;
   const nextValue = Math.max(0, currentValue + direction * step);
+  if (nextValue <= 0) {
+    return "";
+  }
 
   return formatActiveWeightValue(nextValue);
 }
 
 function adjustActiveRepsValue(value, direction) {
-  const currentValue = parseActiveRepsValue(value) ?? 0;
+  const parsedValue = parseActiveRepsValue(value);
+  if (parsedValue === null && direction < 0) {
+    return "";
+  }
+
+  const currentValue = parsedValue ?? 0;
   const nextValue = Math.max(0, currentValue + direction);
+  if (nextValue <= 0) {
+    return "";
+  }
 
   return String(nextValue);
 }
@@ -1823,11 +1840,20 @@ function App() {
             return exerciseLog;
           }
 
+          const currentSets = exerciseLog.sets?.length
+            ? exerciseLog.sets
+            : [{ setNumber: 1, weightKg: "", reps: "" }];
+          const previousSet = currentSets[currentSets.length - 1] ?? {};
+
           return {
             ...exerciseLog,
             sets: renumberSetRows([
-              ...(exerciseLog.sets ?? []),
-              { setNumber: (exerciseLog.sets ?? []).length + 1, weightKg: "", reps: "" },
+              ...currentSets,
+              {
+                setNumber: currentSets.length + 1,
+                weightKg: previousSet.weightKg ?? "",
+                reps: previousSet.reps ?? "",
+              },
             ]),
           };
         }),
@@ -2396,6 +2422,35 @@ function App() {
     }
   }, [refreshData, showNotice]);
 
+  const handleDeleteWorkoutLog = useCallback(
+    async (workoutLogId) => {
+      if (!workoutLogId) {
+        return;
+      }
+
+      if (!window.confirm("Удалить эту тренировку из журнала?")) {
+        return;
+      }
+
+      try {
+        const result = await deleteWorkoutLog(workoutLogId);
+        await refreshData();
+        navigate(
+          {
+            activeTab: "journal",
+            journalView: { name: "overview", workoutLogId: null },
+          },
+          { history: "replace", scroll: "restore" },
+        );
+        showNotice(result.status === "missing" ? "Запись уже удалена" : "Тренировка удалена");
+      } catch (error) {
+        console.error(error);
+        showNotice("Не удалось удалить тренировку", "error");
+      }
+    },
+    [navigate, refreshData, showNotice],
+  );
+
   const activeView = useMemo(() => {
     const screenAnimationMode = screenAnimationModeRef.current;
     const isSecondaryMotion =
@@ -2491,6 +2546,7 @@ function App() {
             data={state.data}
             journalView={state.journalView}
             onBack={goBack}
+            onDeleteWorkout={handleDeleteWorkoutLog}
             onOpenWorkout={openJournalWorkout}
           />
         );
@@ -2522,6 +2578,7 @@ function App() {
     handleClearWorkouts,
     handleDeleteExercise,
     handleDeleteTemplate,
+    handleDeleteWorkoutLog,
     handleExerciseNameChange,
     handleExerciseMediaUrlChange,
     handleExportData,
@@ -3575,16 +3632,16 @@ function ActiveWorkoutScreen({
       </motion.div>
 
       <div className="active-navigation-actions">
-        <button className="action-button active-next-button" type="button" onClick={isLastExercise ? onFinish : onNextExercise}>
-          <span>{isLastExercise ? "Завершить тренировку" : "Следующее упражнение"}</span>
-        </button>
         <button
           className="action-button secondary-action"
           type="button"
           disabled={isFirstExercise}
           onClick={onPreviousExercise}
         >
-          <span>Предыдущее упражнение</span>
+          <span>Предыдущее упр</span>
+        </button>
+        <button className="action-button active-next-button" type="button" onClick={isLastExercise ? onFinish : onNextExercise}>
+          <span>{isLastExercise ? "Завершить трен" : "Следующее упр"}</span>
         </button>
       </div>
     </section>
@@ -3852,6 +3909,10 @@ function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
 
       <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск шаблона" />
 
+      <button className="action-button create-template-button" type="button" onClick={() => onCreate(muscleGroupId)}>
+        <span>Создать шаблон</span>
+      </button>
+
       <div className="template-list">
         {filteredTemplates.length ? (
           filteredTemplates.map((template) => (
@@ -3869,9 +3930,6 @@ function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
         )}
       </div>
 
-      <button className="action-button create-template-button" type="button" onClick={() => onCreate(muscleGroupId)}>
-        <span>Создать шаблон</span>
-      </button>
     </section>
   );
 }
@@ -4201,6 +4259,10 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
 
       <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск упражнения" />
 
+      <button className="action-button create-template-button" type="button" onClick={() => onCreate(muscleGroupId)}>
+        <span>Добавить упражнение</span>
+      </button>
+
       <div className="template-list">
         {filteredExercises.length ? (
           filteredExercises.map((exercise) => (
@@ -4229,9 +4291,6 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
         )}
       </div>
 
-      <button className="action-button create-template-button" type="button" onClick={() => onCreate(muscleGroupId)}>
-        <span>Добавить упражнение</span>
-      </button>
     </section>
   );
 }
@@ -4335,13 +4394,14 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
   );
 }
 
-function JournalView({ data, journalView, onBack, onOpenWorkout }) {
+function JournalView({ data, journalView, onBack, onDeleteWorkout, onOpenWorkout }) {
   if (journalView.name === "details") {
     return (
       <JournalWorkoutDetails
         data={data}
         workoutLogId={journalView.workoutLogId}
         onBack={onBack}
+        onDelete={onDeleteWorkout}
       />
     );
   }
@@ -4410,7 +4470,7 @@ function JournalView({ data, journalView, onBack, onOpenWorkout }) {
   );
 }
 
-function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
+function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete }) {
   const details = buildJournalWorkoutDetails(data, workoutLogId);
 
   if (!details) {
@@ -4472,6 +4532,16 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack }) {
           </div>
         </section>
       ))}
+
+      <div className="journal-detail-actions">
+        <button
+          className="action-button danger-action"
+          type="button"
+          onClick={() => onDelete(details.id)}
+        >
+          <span>Удалить тренировку</span>
+        </button>
+      </div>
     </section>
   );
 }
