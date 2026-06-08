@@ -114,7 +114,7 @@ noscript {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  padding: 24px 16px calc(104px + env(safe-area-inset-bottom));
+  padding: 15px 16px calc(100px + env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
 }
 
@@ -267,6 +267,10 @@ h2 {
   --illustration-right: -5px;
   --illustration-max-width: 60%;
   --illustration-height: calc(100% + 12px);
+}
+
+.workout-card[data-illustration="4"] {
+  --illustration-max-width: 50%;
 }
 
 .workout-card::before {
