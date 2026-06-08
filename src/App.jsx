@@ -1832,7 +1832,7 @@ function App() {
   );
 
   const handleAddActiveSet = useCallback(
-    (exerciseIndex) => {
+    (exerciseIndex, visiblePreviousSet = null) => {
       updateActiveWorkoutSession((session) => ({
         ...session,
         exerciseLogs: session.exerciseLogs.map((exerciseLog, currentExerciseIndex) => {
@@ -1843,7 +1843,8 @@ function App() {
           const currentSets = exerciseLog.sets?.length
             ? exerciseLog.sets
             : [{ setNumber: 1, weightKg: "", reps: "" }];
-          const previousSet = currentSets[currentSets.length - 1] ?? {};
+          const previousSet =
+            visiblePreviousSet ?? currentSets[currentSets.length - 1] ?? {};
 
           return {
             ...exerciseLog,
@@ -3625,7 +3626,11 @@ function ActiveWorkoutScreen({
             ))}
           </div>
 
-          <button className="action-button secondary-action active-add-set-button" type="button" onClick={() => onAddSet(currentIndex)}>
+          <button
+            className="action-button secondary-action active-add-set-button"
+            type="button"
+            onClick={() => onAddSet(currentIndex, sets[sets.length - 1] ?? null)}
+          >
             <span>Добавить подход</span>
           </button>
         </section>

@@ -242,22 +242,42 @@ function getExerciseSnapshotName(snapshotExercise) {
   );
 }
 
+function getJournalTemplateId(log, muscleGroupId, source = {}) {
+  const templateSnapshot = muscleGroupId
+    ? getTemplateSnapshotForMuscleGroup(log, muscleGroupId)
+    : null;
+
+  return (
+    source.templateId ??
+    source.exerciseTemplateId ??
+    source.template?.id ??
+    templateSnapshot?.id ??
+    templateSnapshot?.templateId ??
+    null
+  );
+}
+
 function getJournalSectionFallbacks(data, log, muscleGroupId, source = {}) {
   const muscleGroupsById = indexById(data.muscleGroups ?? []);
+  const templatesById = indexById(data.exerciseTemplates ?? []);
   const templateSnapshot = muscleGroupId ? getTemplateSnapshotForMuscleGroup(log, muscleGroupId) : null;
   const muscleGroupSnapshot = muscleGroupId ? getMuscleGroupSnapshot(log, muscleGroupId) : null;
-  const fallbackMuscleGroup = muscleGroupId ? muscleGroupsById.get(muscleGroupId) : null;
+  const currentMuscleGroup = muscleGroupId ? muscleGroupsById.get(muscleGroupId) : null;
+  const templateId = getJournalTemplateId(log, muscleGroupId, source);
+  const currentTemplate = templateId ? templatesById.get(templateId) : null;
 
   return {
+    templateId,
     muscleGroupName:
       source.muscleGroupNameSnapshot ??
       source.muscleGroup?.name ??
       templateSnapshot?.muscleGroupNameSnapshot ??
       templateSnapshot?.muscleGroup?.name ??
       muscleGroupSnapshot?.name ??
-      fallbackMuscleGroup?.name ??
+      currentMuscleGroup?.name ??
       "Мышца",
     templateName:
+      currentTemplate?.name ??
       source.templateNameSnapshot ??
       source.templateName ??
       source.exerciseTemplateName ??
@@ -280,10 +300,10 @@ function getJournalExerciseName(data, exerciseLog) {
   const exercisesById = indexById(data.exercises ?? []);
 
   return (
+    (exerciseLog.exerciseId ? exercisesById.get(exerciseLog.exerciseId)?.name : null) ??
     exerciseLog.exerciseNameSnapshot ??
     exerciseLog.exerciseName ??
     exerciseLog.name ??
-    (exerciseLog.exerciseId ? exercisesById.get(exerciseLog.exerciseId)?.name : null) ??
     "Упражнение"
   );
 }
@@ -296,12 +316,31 @@ function getJournalPlannedExerciseName(data, exerciseLog) {
     null;
 
   return (
+    (plannedExerciseId ? exercisesById.get(plannedExerciseId)?.name : null) ??
     exerciseLog.plannedExerciseNameSnapshot ??
     exerciseLog.replacement?.plannedExerciseNameSnapshot ??
     exerciseLog.plannedExerciseName ??
-    (plannedExerciseId ? exercisesById.get(plannedExerciseId)?.name : null) ??
     null
   );
+}
+
+function normalizeJournalSnapshotExercise(data, snapshotExercise, index) {
+  const exerciseId =
+    typeof snapshotExercise === "object"
+      ? snapshotExercise?.id ?? snapshotExercise?.exerciseId ?? null
+      : null;
+  const currentExercise = exerciseId
+    ? (data.exercises ?? []).find((exercise) => exercise.id === exerciseId)
+    : null;
+
+  return {
+    id: exerciseId ?? `snapshot-${index}`,
+    name: currentExercise?.name ?? getExerciseSnapshotName(snapshotExercise) ?? "Упражнение",
+    plannedExerciseId: null,
+    plannedName: null,
+    isReplacement: false,
+    sets: [],
+  };
 }
 
 function normalizeJournalExercise(data, exerciseLog, index) {
@@ -356,6 +395,10 @@ function buildJournalSections(data, log) {
     );
 
     if (existing) {
+      if (!existing.templateId && fallbacks.templateId) {
+        existing.templateId = fallbacks.templateId;
+      }
+
       if (
         (existing.muscleGroup.name === "Мышца" || hasSnapshotMuscleName) &&
         fallbacks.muscleGroupName !== "Мышца"
@@ -378,6 +421,7 @@ function buildJournalSections(data, log) {
         id,
         name: fallbacks.muscleGroupName,
       },
+      templateId: fallbacks.templateId,
       templateName: fallbacks.templateName,
       exercises: [],
     };
@@ -438,14 +482,7 @@ function buildJournalSections(data, log) {
       : getExerciseNamesFromSnapshot(snapshot);
 
     section.exercises = snapshotExercises
-      .map((exercise, index) => ({
-        id: typeof exercise === "object" ? exercise?.id ?? `snapshot-${index}` : `snapshot-${index}`,
-        name: getExerciseSnapshotName(exercise) ?? "Упражнение",
-        plannedExerciseId: null,
-        plannedName: null,
-        isReplacement: false,
-        sets: [],
-      }))
+      .map((exercise, index) => normalizeJournalSnapshotExercise(data, exercise, index))
       .filter((exercise) => exercise.name);
   }
 
@@ -795,25 +832,29 @@ export function buildWorkoutPreparationData(data, workoutGroupId) {
           const muscleGroupLog = getMuscleGroupLogForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
           const exerciseLogs = getExerciseLogEntriesForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
           const exerciseNamesFromLogs = exerciseLogs
-            .map((entry) => entry.exerciseNameSnapshot ?? entry.exerciseName ?? entry.name)
+            .map((entry) => getJournalExerciseName(data, entry))
             .filter(Boolean);
-          const exerciseNames = getExerciseNamesFromSnapshot(snapshot);
+          const exerciseNames = Array.isArray(snapshot?.exercises)
+            ? snapshot.exercises
+                .map((exercise, index) =>
+                  normalizeJournalSnapshotExercise(data, exercise, index).name,
+                )
+                .filter(Boolean)
+            : getExerciseNamesFromSnapshot(snapshot);
+          const journalFallbacks = getJournalSectionFallbacks(
+            data,
+            lastWorkoutLog,
+            section.muscleGroup.id,
+            muscleGroupLog ?? snapshot ?? {},
+          );
 
           return {
             muscleGroup: {
               ...section.muscleGroup,
-              name:
-                muscleGroupLog?.muscleGroupNameSnapshot ??
-                snapshot?.muscleGroupNameSnapshot ??
-                snapshot?.muscleGroup?.name ??
-                section.muscleGroup.name,
+              name: journalFallbacks.muscleGroupName,
             },
-            templateName:
-              muscleGroupLog?.templateNameSnapshot ??
-              snapshot?.templateName ??
-              snapshot?.name ??
-              snapshot?.exerciseTemplateName ??
-              section.template.name,
+            templateId: journalFallbacks.templateId,
+            templateName: journalFallbacks.templateName,
             exerciseNames: exerciseNamesFromLogs.length > 0 ? exerciseNamesFromLogs : exerciseNames,
           };
         }),
