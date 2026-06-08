@@ -266,7 +266,7 @@ h2 {
 .workout-card[data-illustration="3"] {
   --illustration-right: -5px;
   --illustration-max-width: 60%;
-  --illustration-height: calc(100% + 12px);
+  --illustration-height: calc(100% + 14px);
 }
 
 .workout-card[data-illustration="4"] {
@@ -287,7 +287,7 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-content: space-between;
-  gap: 12px;
+  gap: 10px;
   width: min(56%, 300px);
   min-width: 0;
   min-height: 100%;
