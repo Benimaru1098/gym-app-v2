@@ -715,6 +715,12 @@ h2 {
   gap: 14px;
 }
 
+.journal-overview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .journal-filter-button {
   display: flex;
   align-items: center;
@@ -731,6 +737,16 @@ h2 {
 .journal-filter-button.is-active {
   border-color: var(--accent);
   background: var(--accent);
+}
+
+.journal-filter-reset-button {
+  padding: 5px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .journal-list,
@@ -1106,22 +1122,27 @@ h2 {
 .active-set-time-popover {
   position: absolute;
   top: calc(100% + 5px);
-  left: -4px;
+  left: -10px;
   z-index: 3;
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 82px;
+  width: min(331px, calc(100vw - 44px));
   min-height: 34px;
-  padding: 6px 7px 6px 10px;
-  border: 1px solid var(--line-strong);
+  padding: 8px 7px 8px 10px;
+  border: 1px solid var(--accent);
   border-radius: 8px;
-  background: var(--surface-3);
+  background: var(--accent);
   box-shadow: var(--shadow-soft);
   color: var(--text);
   font-size: 14px;
   font-weight: 500;
-  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.active-set-time-text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .active-set-time-close {
@@ -1133,7 +1154,7 @@ h2 {
   height: 20px;
   border: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--text);
   padding: 0;
 }
 
@@ -2158,6 +2179,7 @@ h2 {
 .nav-button:focus-visible,
 .back-icon-button:focus-visible,
 .journal-filter-button:focus-visible,
+.journal-filter-reset-button:focus-visible,
 .exercise-card-technique:focus-visible,
 .prep-exercise-row:focus-visible,
 .template-technique-trigger:focus-visible,

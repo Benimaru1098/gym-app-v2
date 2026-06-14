@@ -625,11 +625,68 @@ function renumberSetRows(sets) {
   }));
 }
 
-function getCurrentSetTime() {
-  const now = new Date();
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
+function getActiveSetAddedDate(addedAt, nowTimestamp = Date.now()) {
+  if (!addedAt) {
+    return null;
+  }
+
+  const parsedDate = new Date(addedAt);
+
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return parsedDate;
+  }
+
+  const legacyTimeMatch = /^(\d{2}):(\d{2})$/.exec(addedAt);
+
+  if (!legacyTimeMatch) {
+    return null;
+  }
+
+  const date = new Date(nowTimestamp);
+  date.setHours(Number(legacyTimeMatch[1]), Number(legacyTimeMatch[2]), 0, 0);
+
+  if (date.getTime() > nowTimestamp) {
+    date.setDate(date.getDate() - 1);
+  }
+
+  return date;
+}
+
+function formatActiveSetAddedTime(addedAt, nowTimestamp) {
+  const date = getActiveSetAddedDate(addedAt, nowTimestamp);
+
+  if (!date) {
+    return "";
+  }
+
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function formatActiveSetMinutesAgo(addedAt, nowTimestamp) {
+  const date = getActiveSetAddedDate(addedAt, nowTimestamp);
+
+  if (!date) {
+    return "";
+  }
+
+  const minutes = Math.max(0, Math.floor((nowTimestamp - date.getTime()) / 60000));
+
+  if (minutes === 0) {
+    return "меньше минуты назад";
+  }
+
+  const lastTwoDigits = minutes % 100;
+  const lastDigit = minutes % 10;
+  const unit =
+    lastTwoDigits >= 11 && lastTwoDigits <= 14
+      ? "минут"
+      : lastDigit === 1
+        ? "минуту"
+        : lastDigit >= 2 && lastDigit <= 4
+          ? "минуты"
+          : "минут";
+
+  return `${minutes} ${unit} назад`;
 }
 
 function createEmptyActiveSetRows() {
@@ -1843,7 +1900,7 @@ function App() {
                       setIndex === 0 &&
                       normalizedValue !== "" &&
                       !set.addedAt
-                        ? { addedAt: getCurrentSetTime() }
+                        ? { addedAt: new Date().toISOString() }
                         : {}),
                     }
                   : set,
@@ -1879,7 +1936,7 @@ function App() {
                 setNumber: currentSets.length + 1,
                 weightKg: previousSet.weightKg ?? "",
                 reps: previousSet.reps ?? "",
-                addedAt: getCurrentSetTime(),
+                addedAt: new Date().toISOString(),
               },
             ]),
           };
@@ -3543,6 +3600,7 @@ function ActiveWorkoutScreen({
   const exerciseMotionStateRef = useRef({ index: currentIndex, sessionId: session?.id ?? null });
   const setTimePopoverRef = useRef(null);
   const [visibleSetTimeIndex, setVisibleSetTimeIndex] = useState(null);
+  const [setTimeNow, setSetTimeNow] = useState(() => Date.now());
   const previousExerciseMotionState = exerciseMotionStateRef.current;
   const exerciseMotionMode =
     previousExerciseMotionState.sessionId !== (session?.id ?? null)
@@ -3577,6 +3635,16 @@ function ActiveWorkoutScreen({
 
     document.addEventListener("pointerdown", handleOutsidePointerDown);
     return () => document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  }, [visibleSetTimeIndex]);
+
+  useEffect(() => {
+    if (visibleSetTimeIndex === null) {
+      return undefined;
+    }
+
+    setSetTimeNow(Date.now());
+    const timerId = window.setInterval(() => setSetTimeNow(Date.now()), 60000);
+    return () => window.clearInterval(timerId);
   }, [visibleSetTimeIndex]);
 
   if (!session || !session.exerciseLogs?.length) {
@@ -3688,16 +3756,23 @@ function ActiveWorkoutScreen({
                     aria-expanded={visibleSetTimeIndex === index}
                     onClick={() =>
                       set.addedAt &&
-                      setVisibleSetTimeIndex((currentIndexValue) =>
-                        currentIndexValue === index ? null : index,
-                      )
+                      setVisibleSetTimeIndex((currentIndexValue) => {
+                        if (currentIndexValue !== index) {
+                          setSetTimeNow(Date.now());
+                        }
+
+                        return currentIndexValue === index ? null : index;
+                      })
                     }
                   >
                     {index + 1}
                   </button>
                   {visibleSetTimeIndex === index && set.addedAt ? (
                     <div className="active-set-time-popover">
-                      <span>{set.addedAt}</span>
+                      <span className="active-set-time-text">
+                        Подход добавлен {formatActiveSetMinutesAgo(set.addedAt, setTimeNow)} (
+                        {formatActiveSetAddedTime(set.addedAt, setTimeNow)})
+                      </span>
                       <button
                         className="active-set-time-close"
                         type="button"
@@ -4605,13 +4680,24 @@ function JournalView({
       <header className="screen-header">
         <div className="journal-overview-title-row">
           <h1>Журнал</h1>
-          <button
-            className={`journal-filter-button${hasActiveFilter ? " is-active" : ""}`}
-            type="button"
-            onClick={onOpenFilter}
-          >
-            <span>Фильтр</span>
-          </button>
+          <div className="journal-overview-actions">
+            <button
+              className={`journal-filter-button${hasActiveFilter ? " is-active" : ""}`}
+              type="button"
+              onClick={onOpenFilter}
+            >
+              <span>Фильтр</span>
+            </button>
+            {hasActiveFilter ? (
+              <button
+                className="journal-filter-reset-button"
+                type="button"
+                onClick={onClearFilter}
+              >
+                <span>Сбросить</span>
+              </button>
+            ) : null}
+          </div>
         </div>
       </header>
 
