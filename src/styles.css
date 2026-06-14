@@ -703,34 +703,8 @@ h2 {
 }
 
 .journal-screen,
-.journal-detail-screen,
-.journal-filter-screen {
+.journal-detail-screen {
   gap: 14px;
-}
-
-.journal-overview-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.journal-filter-button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-3);
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.journal-filter-button.is-active {
-  border-color: var(--accent);
-  background: var(--accent);
 }
 
 .journal-list,
@@ -883,11 +857,6 @@ h2 {
 .journal-detail-actions {
   display: grid;
   margin-top: 2px;
-}
-
-.journal-filter-actions {
-  display: grid;
-  gap: 9px;
 }
 
 .journal-muscle-header {
@@ -1081,78 +1050,11 @@ h2 {
   gap: 9px;
 }
 
-.active-set-number-wrap {
-  position: relative;
-  place-items: center;
-  align-self: stretch;
-}
-
 .active-set-number {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  background: transparent;
   justify-self: center;
   color: var(--muted);
   font-size: 15px;
   font-weight: 600;
-  padding: 0;
-}
-
-.active-set-number:disabled {
-  color: var(--muted);
-}
-
-.active-set-time-popover {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: -4px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 82px;
-  min-height: 34px;
-  padding: 6px 7px 6px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--surface-3);
-  box-shadow: var(--shadow-soft);
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.active-set-time-close {
-  position: relative;
-  display: grid;
-  place-items: center;
-  flex: 0 0 20px;
-  width: 20px;
-  height: 20px;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  padding: 0;
-}
-
-.active-set-time-close::before,
-.active-set-time-close::after {
-  position: absolute;
-  width: 11px;
-  height: 1.5px;
-  border-radius: 999px;
-  background: currentColor;
-  content: "";
-}
-
-.active-set-time-close::before {
-  transform: rotate(45deg);
-}
-
-.active-set-time-close::after {
-  transform: rotate(-45deg);
 }
 
 .active-set-input {
@@ -1650,13 +1552,6 @@ h2 {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--text);
-}
-
-.muscle-chip-button:disabled {
-  border-color: var(--line);
-  background: var(--surface);
-  color: var(--muted-2);
-  opacity: 0.48;
 }
 
 .icon-wrap {
@@ -2157,7 +2052,6 @@ h2 {
 
 .nav-button:focus-visible,
 .back-icon-button:focus-visible,
-.journal-filter-button:focus-visible,
 .exercise-card-technique:focus-visible,
 .prep-exercise-row:focus-visible,
 .template-technique-trigger:focus-visible,

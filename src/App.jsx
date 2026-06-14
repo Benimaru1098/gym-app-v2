@@ -28,9 +28,7 @@ import {
   buildFreeWorkoutCard,
   buildFreeWorkoutSessionDraft,
   buildJournalEntries,
-  buildJournalFilterOptions,
   buildJournalWorkoutDetails,
-  filterJournalEntries,
   buildTemplateCreationData,
   buildTemplateEditingData,
   buildTemplateSummariesByMuscleGroup,
@@ -148,7 +146,6 @@ function createInitialState() {
     isStandalone:
       window.matchMedia?.("(display-mode: standalone)")?.matches ||
       window.navigator.standalone === true,
-    journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     journalView: { name: "overview", workoutLogId: null },
     notices: [],
     planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
@@ -195,10 +192,6 @@ function normalizePlanView(view) {
 function normalizeJournalView(view) {
   if (view?.name === "details") {
     return { name: "details", workoutLogId: view.workoutLogId };
-  }
-
-  if (view?.name === "filter") {
-    return { name: "filter", workoutLogId: null };
   }
 
   return { name: "overview", workoutLogId: null };
@@ -386,22 +379,6 @@ function pluralRu(value, one, few, many) {
   return many;
 }
 
-function formatNumericDate(dateValue, emptyLabel = "ещё не было") {
-  if (!dateValue) {
-    return emptyLabel;
-  }
-
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) {
-    return emptyLabel;
-  }
-
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-
-  return `${day}.${month}.${date.getFullYear()}`;
-}
-
 function formatRelativeDate(dateValue, emptyLabel = "ещё не было") {
   if (!dateValue) {
     return emptyLabel;
@@ -425,11 +402,11 @@ function formatRelativeDate(dateValue, emptyLabel = "ещё не было") {
     return "вчера";
   }
 
-  if (diffDays <= 7) {
+  if (diffDays <= 30) {
     return `${diffDays} ${pluralRu(diffDays, "день", "дня", "дней")} назад`;
   }
 
-  return formatNumericDate(dateValue, emptyLabel);
+  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
 }
 
 function formatLastWorkoutLabel(dateValue) {
@@ -625,15 +602,24 @@ function renumberSetRows(sets) {
   }));
 }
 
-function getCurrentSetTime() {
-  const now = new Date();
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
+function getDefaultSetCountForMuscleGroup(muscleGroupId) {
+  return muscleGroupId === "biceps" || muscleGroupId === "triceps" ? 3 : 4;
 }
 
-function createEmptyActiveSetRows() {
-  return [{ setNumber: 1, weightKg: "", reps: "" }];
+function createActiveSetRowsFromPrevious(previousSets, muscleGroupId) {
+  const sourceSets = previousSets.length
+    ? previousSets
+    : Array.from({ length: getDefaultSetCountForMuscleGroup(muscleGroupId) }, (_, index) => ({
+        setNumber: index + 1,
+        weightKg: "",
+        reps: "",
+      }));
+
+  return sourceSets.map((set, index) => ({
+    setNumber: index + 1,
+    weightKg: set.weightKg === undefined || set.weightKg === null ? "" : String(set.weightKg),
+    reps: set.reps === undefined || set.reps === null ? "" : String(set.reps),
+  }));
 }
 
 function getActiveWorkoutSessionFromState(appState) {
@@ -1835,18 +1821,7 @@ function App() {
             ...exerciseLog,
             sets: renumberSetRows(
               (exerciseLog.sets?.length ? exerciseLog.sets : [{ setNumber: 1, weightKg: "", reps: "" }]).map((set, currentSetIndex) =>
-                currentSetIndex === setIndex
-                  ? {
-                      ...set,
-                      [field]: normalizedValue,
-                      ...(field === "reps" &&
-                      setIndex === 0 &&
-                      normalizedValue !== "" &&
-                      !set.addedAt
-                        ? { addedAt: getCurrentSetTime() }
-                        : {}),
-                    }
-                  : set,
+                currentSetIndex === setIndex ? { ...set, [field]: normalizedValue } : set,
               ),
             ),
           };
@@ -1879,7 +1854,6 @@ function App() {
                 setNumber: currentSets.length + 1,
                 weightKg: previousSet.weightKg ?? "",
                 reps: previousSet.reps ?? "",
-                addedAt: getCurrentSetTime(),
               },
             ]),
           };
@@ -1981,7 +1955,7 @@ function App() {
                   replacedAt: new Date().toISOString(),
                 }
               : null,
-            sets: createEmptyActiveSetRows(),
+            sets: createActiveSetRowsFromPrevious(previousSets, exercise.muscleGroupId),
           };
         }),
       }), { showError: true });
@@ -2069,59 +2043,6 @@ function App() {
     },
     [navigate],
   );
-
-  const openJournalFilter = useCallback(() => {
-    navigate({ activeTab: "journal", journalView: { name: "filter" } });
-  }, [navigate]);
-
-  const toggleJournalFilterMuscleGroup = useCallback(
-    (muscleGroupId, muscleExerciseIds = []) => {
-      patchState((current) => {
-        const selectedMuscleGroupIds = current.journalFilter.selectedMuscleGroupIds ?? [];
-        const isSelected = selectedMuscleGroupIds.includes(muscleGroupId);
-        const removedExerciseIds = new Set(muscleExerciseIds);
-
-        return {
-          journalFilter: {
-            selectedMuscleGroupIds: isSelected
-              ? selectedMuscleGroupIds.filter((id) => id !== muscleGroupId)
-              : [...selectedMuscleGroupIds, muscleGroupId],
-            selectedExerciseIds: isSelected
-              ? (current.journalFilter.selectedExerciseIds ?? []).filter(
-                  (id) => !removedExerciseIds.has(id),
-                )
-              : current.journalFilter.selectedExerciseIds ?? [],
-          },
-        };
-      });
-    },
-    [patchState],
-  );
-
-  const toggleJournalFilterExercise = useCallback(
-    (exerciseId) => {
-      patchState((current) => {
-        const selectedExerciseIds = current.journalFilter.selectedExerciseIds ?? [];
-        const isSelected = selectedExerciseIds.includes(exerciseId);
-
-        return {
-          journalFilter: {
-            ...current.journalFilter,
-            selectedExerciseIds: isSelected
-              ? selectedExerciseIds.filter((id) => id !== exerciseId)
-              : [...selectedExerciseIds, exerciseId],
-          },
-        };
-      });
-    },
-    [patchState],
-  );
-
-  const clearJournalFilter = useCallback(() => {
-    patchState({
-      journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
-    });
-  }, [patchState]);
 
   const handleTemplateNameChange = useCallback((event) => {
     const value = event.target.value;
@@ -2470,7 +2391,6 @@ function App() {
             freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
             homeView: { name: "overview", workoutGroupId: null },
             isLoading: false,
-            journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
             journalView: { name: "overview", workoutLogId: null },
             notices: [],
             planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
@@ -2625,15 +2545,10 @@ function App() {
         screenContent = (
           <JournalView
             data={state.data}
-            journalFilter={state.journalFilter}
             journalView={state.journalView}
             onBack={goBack}
-            onClearFilter={clearJournalFilter}
             onDeleteWorkout={handleDeleteWorkoutLog}
-            onOpenFilter={openJournalFilter}
             onOpenWorkout={openJournalWorkout}
-            onToggleFilterExercise={toggleJournalFilterExercise}
-            onToggleFilterMuscleGroup={toggleJournalFilterMuscleGroup}
           />
         );
       }
@@ -2655,7 +2570,6 @@ function App() {
   }, [
     addDraftExercise,
     addFreeWorkoutExercise,
-    clearJournalFilter,
     goBack,
     handleActiveNextExercise,
     handleActivePreviousExercise,
@@ -2685,7 +2599,6 @@ function App() {
     openExerciseReplacement,
     openExerciseTechnique,
     openFreeWorkoutPreparation,
-    openJournalFilter,
     openJournalWorkout,
     openTemplateCreate,
     openTemplateEdit,
@@ -2704,12 +2617,9 @@ function App() {
     state.freeWorkoutDraft,
     state.homeView,
     state.isLoading,
-    state.journalFilter,
     state.journalView,
     state.planView,
     state.templateDraft,
-    toggleJournalFilterExercise,
-    toggleJournalFilterMuscleGroup,
   ]);
 
   return (
@@ -3098,7 +3008,7 @@ function WorkoutPreparationScreen({
     <section className="screen workout-prep-screen">
       <header className="screen-header">
         <ScreenTitle onBack={onBack}>{details.workoutGroup.name}</ScreenTitle>
-        <p className="screen-subtitle">Последний раз: {formatNumericDate(details.lastWorkoutDate)}</p>
+        <p className="screen-subtitle">Последний раз: {formatRelativeDate(details.lastWorkoutDate)}</p>
       </header>
 
       <section className="panel plan-section">
@@ -3230,7 +3140,7 @@ function FreeWorkoutPreparationScreen({
     <section className="screen workout-prep-screen free-workout-prep-screen">
       <header className="screen-header">
         <ScreenTitle onBack={onBack}>{FREE_WORKOUT_NAME}</ScreenTitle>
-        <p className="screen-subtitle">Последний раз: {formatNumericDate(freeWorkoutCard.lastWorkoutDate)}</p>
+        <p className="screen-subtitle">Последний раз: {formatRelativeDate(freeWorkoutCard.lastWorkoutDate)}</p>
       </header>
 
       <section className="panel plan-section">
@@ -3539,10 +3449,7 @@ function ActiveWorkoutScreen({
         exerciseLogsLength - 1,
       )
     : 0;
-  const currentExerciseId = session?.exerciseLogs?.[currentIndex]?.exerciseId ?? null;
   const exerciseMotionStateRef = useRef({ index: currentIndex, sessionId: session?.id ?? null });
-  const setTimePopoverRef = useRef(null);
-  const [visibleSetTimeIndex, setVisibleSetTimeIndex] = useState(null);
   const previousExerciseMotionState = exerciseMotionStateRef.current;
   const exerciseMotionMode =
     previousExerciseMotionState.sessionId !== (session?.id ?? null)
@@ -3559,25 +3466,6 @@ function ActiveWorkoutScreen({
       sessionId: session?.id ?? null,
     };
   }, [currentIndex, session?.id]);
-
-  useEffect(() => {
-    setVisibleSetTimeIndex(null);
-  }, [currentExerciseId, currentIndex, session?.id]);
-
-  useEffect(() => {
-    if (visibleSetTimeIndex === null) {
-      return undefined;
-    }
-
-    const handleOutsidePointerDown = (event) => {
-      if (!setTimePopoverRef.current?.contains(event.target)) {
-        setVisibleSetTimeIndex(null);
-      }
-    };
-
-    document.addEventListener("pointerdown", handleOutsidePointerDown);
-    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown);
-  }, [visibleSetTimeIndex]);
 
   if (!session || !session.exerciseLogs?.length) {
     return (
@@ -3672,41 +3560,7 @@ function ActiveWorkoutScreen({
                 key={`${exerciseLog.exerciseId}-${set.setNumber ?? index}`}
                 className="active-set-row"
               >
-                <div
-                  className="active-set-number-wrap"
-                  ref={visibleSetTimeIndex === index ? setTimePopoverRef : null}
-                >
-                  <button
-                    className="active-set-number"
-                    type="button"
-                    disabled={!set.addedAt}
-                    aria-label={
-                      set.addedAt
-                        ? `Показать время добавления подхода ${index + 1}`
-                        : `Время подхода ${index + 1} ещё не записано`
-                    }
-                    aria-expanded={visibleSetTimeIndex === index}
-                    onClick={() =>
-                      set.addedAt &&
-                      setVisibleSetTimeIndex((currentIndexValue) =>
-                        currentIndexValue === index ? null : index,
-                      )
-                    }
-                  >
-                    {index + 1}
-                  </button>
-                  {visibleSetTimeIndex === index && set.addedAt ? (
-                    <div className="active-set-time-popover">
-                      <span>{set.addedAt}</span>
-                      <button
-                        className="active-set-time-close"
-                        type="button"
-                        aria-label="Закрыть время подхода"
-                        onClick={() => setVisibleSetTimeIndex(null)}
-                      />
-                    </div>
-                  ) : null}
-                </div>
+                <span className="active-set-number">{index + 1}</span>
                 <div className="active-set-input input-kg">
                   <button
                     className="active-set-step-button plus-kg"
@@ -3766,10 +3620,7 @@ function ActiveWorkoutScreen({
                   type="button"
                   disabled={!canRemoveSet}
                   aria-label={`Удалить подход ${index + 1}`}
-                  onClick={() => {
-                    setVisibleSetTimeIndex(null);
-                    onRemoveSet(currentIndex, index);
-                  }}
+                  onClick={() => onRemoveSet(currentIndex, index)}
                 />
               </div>
             ))}
@@ -3778,10 +3629,7 @@ function ActiveWorkoutScreen({
           <button
             className="action-button secondary-action active-add-set-button"
             type="button"
-            onClick={() => {
-              setVisibleSetTimeIndex(null);
-              onAddSet(currentIndex, sets[sets.length - 1] ?? null);
-            }}
+            onClick={() => onAddSet(currentIndex, sets[sets.length - 1] ?? null)}
           >
             <span>Добавить подход</span>
           </button>
@@ -4551,29 +4399,7 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
   );
 }
 
-function JournalView({
-  data,
-  journalFilter,
-  journalView,
-  onBack,
-  onClearFilter,
-  onDeleteWorkout,
-  onOpenFilter,
-  onOpenWorkout,
-  onToggleFilterExercise,
-  onToggleFilterMuscleGroup,
-}) {
-  const allEntries = useMemo(() => buildJournalEntries(data), [data]);
-  const filterOptions = useMemo(
-    () => buildJournalFilterOptions(data, allEntries),
-    [allEntries, data],
-  );
-  const entries = useMemo(
-    () => filterJournalEntries(allEntries, journalFilter, filterOptions),
-    [allEntries, filterOptions, journalFilter],
-  );
-  const hasActiveFilter = Boolean(journalFilter.selectedMuscleGroupIds?.length);
-
+function JournalView({ data, journalView, onBack, onDeleteWorkout, onOpenWorkout }) {
   if (journalView.name === "details") {
     return (
       <JournalWorkoutDetails
@@ -4585,34 +4411,12 @@ function JournalView({
     );
   }
 
-  if (journalView.name === "filter") {
-    return (
-      <JournalFilterScreen
-        filter={journalFilter}
-        filterOptions={filterOptions}
-        resultCount={entries.length}
-        onApply={onBack}
-        onBack={onBack}
-        onClear={onClearFilter}
-        onToggleExercise={onToggleFilterExercise}
-        onToggleMuscleGroup={onToggleFilterMuscleGroup}
-      />
-    );
-  }
+  const entries = buildJournalEntries(data);
 
   return (
     <section className="screen journal-screen">
       <header className="screen-header">
-        <div className="journal-overview-title-row">
-          <h1>Журнал</h1>
-          <button
-            className={`journal-filter-button${hasActiveFilter ? " is-active" : ""}`}
-            type="button"
-            onClick={onOpenFilter}
-          >
-            <span>Фильтр</span>
-          </button>
-        </div>
+        <h1>Журнал</h1>
       </header>
 
       {entries.length ? (
@@ -4663,170 +4467,10 @@ function JournalView({
       ) : (
         <div className="empty-state compact-empty-state journal-empty-state">
           <SvgIcon name="journal" />
-          <h2>{allEntries.length ? "По фильтру ничего не найдено" : "Пока нет завершённых тренировок"}</h2>
-          <p>
-            {allEntries.length
-              ? "Измени выбранные мышцы или упражнения."
-              : "После завершения тренировки записи появятся здесь."}
-          </p>
+          <h2>Пока нет завершённых тренировок</h2>
+          <p>После завершения тренировки записи появятся здесь.</p>
         </div>
       )}
-    </section>
-  );
-}
-
-function JournalFilterScreen({
-  filter,
-  filterOptions,
-  resultCount,
-  onApply,
-  onBack,
-  onClear,
-  onToggleExercise,
-  onToggleMuscleGroup,
-}) {
-  const shouldReduceMotion = useReducedMotion();
-  const [searchQueries, setSearchQueries] = useState({});
-  const selectedMuscleGroupIds = filter.selectedMuscleGroupIds ?? [];
-  const selectedExerciseIds = filter.selectedExerciseIds ?? [];
-  const selectedMuscleGroupSet = new Set(selectedMuscleGroupIds);
-  const selectedExerciseSet = new Set(selectedExerciseIds);
-  const selectedOptions = selectedMuscleGroupIds
-    .map((muscleGroupId) =>
-      filterOptions.find((option) => option.muscleGroup.id === muscleGroupId),
-    )
-    .filter(Boolean);
-  const hasActiveFilter = selectedMuscleGroupIds.length > 0;
-  const baseSectionTransition = shouldReduceMotion
-    ? { duration: 0 }
-    : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
-
-  const handleSearchChange = useCallback((muscleGroupId, value) => {
-    setSearchQueries((current) => ({
-      ...current,
-      [muscleGroupId]: value,
-    }));
-  }, []);
-
-  return (
-    <section className="screen journal-filter-screen">
-      <header className="screen-header">
-        <ScreenTitle onBack={onBack}>Фильтр</ScreenTitle>
-      </header>
-
-      <section className="panel plan-section">
-        <div className="section-title">
-          <span>Группы мышц</span>
-        </div>
-        <div className="muscle-chip-list">
-          {filterOptions.map((option) => {
-            const muscleGroupId = option.muscleGroup.id;
-            const isSelected = selectedMuscleGroupSet.has(muscleGroupId);
-            const isDisabled = !option.isAvailable;
-
-            return (
-              <button
-                key={muscleGroupId}
-                className={`muscle-chip-button${isSelected ? " is-selected" : ""}`}
-                type="button"
-                disabled={isDisabled}
-                aria-pressed={isSelected}
-                onClick={() =>
-                  onToggleMuscleGroup(
-                    muscleGroupId,
-                    option.exercises.map((exercise) => exercise.id),
-                  )
-                }
-              >
-                {option.muscleGroup.name}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <LayoutGroup id="journal-filter-builder">
-        <AnimatePresence initial={false} mode="popLayout">
-          {selectedOptions.map((option) => {
-            const muscleGroupId = option.muscleGroup.id;
-            const searchQuery = searchQueries[muscleGroupId] ?? "";
-            const normalizedQuery = normalizeSearchValue(searchQuery);
-            const exercises = normalizedQuery
-              ? option.exercises.filter((exercise) =>
-                  matchesSearchValue(exercise.name, normalizedQuery),
-                )
-              : option.exercises;
-
-            return (
-              <motion.section
-                key={muscleGroupId}
-                layout
-                className="panel plan-section template-builder-section journal-filter-exercise-section"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={baseSectionTransition}
-              >
-                <div className="section-title">
-                  <span>{option.muscleGroup.name}</span>
-                  <span>База упражнений</span>
-                </div>
-                <SearchField
-                  value={searchQuery}
-                  onChange={(value) => handleSearchChange(muscleGroupId, value)}
-                  placeholder="Поиск упражнения"
-                />
-                <div className="template-builder-scroll">
-                  {exercises.length ? (
-                    <div className="template-base-list">
-                      {exercises.map((exercise) => {
-                        const isSelected = selectedExerciseSet.has(exercise.id);
-
-                        return (
-                          <button
-                            key={exercise.id}
-                            className={`plan-row template-base-exercise-button${isSelected ? " is-selected" : ""}`}
-                            type="button"
-                            aria-pressed={isSelected}
-                            onClick={() => onToggleExercise(exercise.id)}
-                          >
-                            <span className="template-choice-name">{exercise.name}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="template-builder-empty">
-                      {option.exercises.length ? "Ничего не найдено" : "Нет упражнений для фильтра"}
-                    </div>
-                  )}
-                </div>
-              </motion.section>
-            );
-          })}
-        </AnimatePresence>
-      </LayoutGroup>
-
-      <div className="journal-filter-actions">
-        <button
-          className="action-button"
-          type="button"
-          disabled={!hasActiveFilter}
-          onClick={onApply}
-        >
-          <span>
-            Применить фильтр{hasActiveFilter ? ` · ${resultCount}` : ""}
-          </span>
-        </button>
-        <button
-          className="action-button secondary-action"
-          type="button"
-          disabled={!hasActiveFilter}
-          onClick={onClear}
-        >
-          <span>Сбросить</span>
-        </button>
-      </div>
     </section>
   );
 }
