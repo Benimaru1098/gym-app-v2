@@ -335,6 +335,7 @@ function normalizeJournalSnapshotExercise(data, snapshotExercise, index) {
 
   return {
     id: exerciseId ?? `snapshot-${index}`,
+    hasStableId: Boolean(exerciseId),
     name: currentExercise?.name ?? getExerciseSnapshotName(snapshotExercise) ?? "Упражнение",
     plannedExerciseId: null,
     plannedName: null,
@@ -358,6 +359,7 @@ function normalizeJournalExercise(data, exerciseLog, index) {
 
   return {
     id: exerciseLog.exerciseId ?? `exercise-${index}`,
+    hasStableId: Boolean(exerciseLog.exerciseId),
     name,
     plannedExerciseId,
     plannedName: isReplacement ? plannedName ?? "Плановое упражнение" : null,
@@ -507,6 +509,84 @@ export function buildJournalEntries(data) {
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
+export function buildJournalFilterOptions(data, entries = buildJournalEntries(data)) {
+  const exercisesByMuscleGroupId = new Map();
+
+  for (const entry of entries) {
+    for (const section of entry.sections ?? []) {
+      const muscleGroupId = section.muscleGroup?.id;
+      if (!muscleGroupId) {
+        continue;
+      }
+
+      const exercisesById = exercisesByMuscleGroupId.get(muscleGroupId) ?? new Map();
+
+      for (const exercise of section.exercises ?? []) {
+        if (!exercise.hasStableId || !exercise.id || exercisesById.has(exercise.id)) {
+          continue;
+        }
+
+        exercisesById.set(exercise.id, {
+          id: exercise.id,
+          name: exercise.name,
+          muscleGroupId,
+        });
+      }
+
+      exercisesByMuscleGroupId.set(muscleGroupId, exercisesById);
+    }
+  }
+
+  return [...(data.muscleGroups ?? [])]
+    .sort((first, second) => Number(first.sortOrder ?? 0) - Number(second.sortOrder ?? 0))
+    .map((muscleGroup) => ({
+      muscleGroup,
+      isAvailable: exercisesByMuscleGroupId.has(muscleGroup.id),
+      exercises: [...(exercisesByMuscleGroupId.get(muscleGroup.id)?.values() ?? [])].sort(
+        (first, second) => first.name.localeCompare(second.name, "ru"),
+      ),
+    }));
+}
+
+export function filterJournalEntries(entries, filter, filterOptions) {
+  const selectedMuscleGroupIds = filter?.selectedMuscleGroupIds ?? [];
+  if (!selectedMuscleGroupIds.length) {
+    return entries;
+  }
+
+  const selectedExerciseIds = new Set(filter?.selectedExerciseIds ?? []);
+  const exercisesByMuscleGroupId = new Map(
+    (filterOptions ?? []).map((option) => [
+      option.muscleGroup.id,
+      new Set(
+        option.exercises
+          .filter((exercise) => selectedExerciseIds.has(exercise.id))
+          .map((exercise) => exercise.id),
+      ),
+    ]),
+  );
+
+  return entries.filter((entry) =>
+    selectedMuscleGroupIds.some((muscleGroupId) => {
+      const section = (entry.sections ?? []).find(
+        (item) => item.muscleGroup?.id === muscleGroupId,
+      );
+      if (!section) {
+        return false;
+      }
+
+      const selectedExercises = exercisesByMuscleGroupId.get(muscleGroupId);
+      if (!selectedExercises?.size) {
+        return true;
+      }
+
+      return (section.exercises ?? []).some((exercise) =>
+        selectedExercises.has(exercise.id),
+      );
+    }),
+  );
+}
+
 export function buildJournalWorkoutDetails(data, workoutLogId) {
   const log = (data.workoutLogs ?? []).find((item) => item.id === workoutLogId) ?? null;
 
@@ -564,22 +644,8 @@ function buildTemplateExerciseItems(data, template, exercisesById) {
   });
 }
 
-const DEFAULT_ACTIVE_SET_COUNT = 4;
-
-function createInitialActiveSetRows(previousSets) {
-  const sourceSets = previousSets.length
-    ? previousSets
-    : Array.from({ length: DEFAULT_ACTIVE_SET_COUNT }, (_, index) => ({
-        setNumber: index + 1,
-        weightKg: "",
-        reps: "",
-      }));
-
-  return sourceSets.map((set, index) => ({
-    setNumber: index + 1,
-    weightKg: set.weightKg === undefined || set.weightKg === null ? "" : String(set.weightKg),
-    reps: set.reps === undefined || set.reps === null ? "" : String(set.reps),
-  }));
+function createInitialActiveSetRows() {
+  return [{ setNumber: 1, weightKg: "", reps: "" }];
 }
 
 export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, startedAt) {
@@ -648,7 +714,7 @@ export function buildActiveWorkoutSessionDraft(data, workoutGroupId, sessionId, 
         trackingType: exercise.trackingType,
         previousSets,
         replacement: null,
-        sets: createInitialActiveSetRows(previousSets),
+        sets: createInitialActiveSetRows(),
       });
     }
   }
@@ -734,7 +800,7 @@ export function buildFreeWorkoutSessionDraft(data, selectedExerciseIds, sessionI
       trackingType: exercise.trackingType ?? "weight_reps",
       previousSets,
       replacement: null,
-      sets: createInitialActiveSetRows(previousSets),
+      sets: createInitialActiveSetRows(),
     });
   }
 
