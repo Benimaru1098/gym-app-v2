@@ -225,8 +225,17 @@ h2 {
 
 .home-workout-list {
   flex: 1;
-  grid-template-rows: repeat(4, minmax(108px, 1fr));
+}
+
+.home-workout-list.is-fitted {
+  grid-template-rows: repeat(var(--home-workout-card-count), minmax(108px, 1fr));
   min-height: 468px;
+}
+
+.home-workout-list.is-fixed {
+  flex: 0 0 auto;
+  grid-auto-rows: 148px;
+  min-height: 0;
 }
 
 .workout-card {
@@ -257,19 +266,28 @@ h2 {
   border-color: var(--accent-line);
 }
 
-.workout-card[data-illustration="2"] {
+.workout-card[data-illustration="back_triceps"] {
   --illustration-right: -10px;
   --illustration-max-width: 56%;
   --illustration-height: calc(100% + 18px);
 }
 
-.workout-card[data-illustration="3"] {
+.workout-card[data-illustration="legs_shoulders"],
+.workout-card[data-illustration="triceps_biceps"]
+{
   --illustration-right: -5px;
   --illustration-max-width: 60%;
   --illustration-height: calc(100% + 14px);
 }
 
-.workout-card[data-illustration="4"] {
+.workout-card[data-illustration="back_biceps"],
+.workout-card[data-illustration="biceps_legs"]
+{
+  --illustration-right: -5px;
+  --illustration-max-width: 56%;
+}
+
+.workout-card[data-illustration="my_plan"] {
   --illustration-max-width: 50%;
 }
 
@@ -1342,14 +1360,58 @@ h2 {
   background: var(--surface-3);
 }
 
-.plan-cycle-row {
-  padding-left: 12px;
-}
-
 .plan-row strong {
   color: var(--text);
   font-size: 15px;
   font-weight: 500;
+}
+
+.training-day-row {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  text-align: left;
+}
+
+.training-day-row .click-indicator {
+  margin-left: auto;
+}
+
+.training-day-add-button {
+  min-height: 46px;
+}
+
+.training-day-empty {
+  padding: 10px 2px;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.training-day-form {
+  display: grid;
+  gap: 14px;
+}
+
+.training-day-muscle-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.training-day-muscle-chip > span:first-child {
+  min-width: 0;
+}
+
+.training-day-name-preview {
+  display: grid;
+}
+
+.training-day-name-preview strong {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
 }
 
 /*.plan-row span {
@@ -2185,6 +2247,8 @@ h2 {
 .template-technique-trigger:focus-visible,
 .journal-card:focus-visible,
 .workout-card-button:focus-visible,
+.training-day-row:focus-visible,
+.training-day-muscle-chip:focus-visible,
 .prep-template-select:focus-visible,
 .template-select-option:focus-visible,
 .plan-summary-button:focus-visible,

@@ -322,12 +322,6 @@ export const initialData = {
       orderIndex: 2,
     },
   ],
-  workoutCycles: [
-    {
-      id: "cycle-default",
-      workoutGroupIds: ["wg-chest-biceps", "wg-back-triceps", "wg-legs-shoulders"],
-    },
-  ],
   workoutLogs: [],
 };
 

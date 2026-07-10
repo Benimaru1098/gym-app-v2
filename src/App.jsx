@@ -5,6 +5,7 @@ import {
   deleteActiveWorkoutSessionsForWorkoutGroup,
   deleteExercise,
   deleteExerciseTemplate,
+  deleteWorkoutGroup,
   deleteWorkoutLog,
   exportAppData,
   finishActiveWorkoutSession,
@@ -13,6 +14,7 @@ import {
   saveActiveWorkoutSession,
   saveExercise,
   saveExerciseTemplate,
+  saveWorkoutGroup,
   saveWorkoutGroupSelectedTemplate,
 } from "./data/storage.js";
 import { TRACKING_TYPES } from "./data/seed.js";
@@ -20,7 +22,6 @@ import {
   FREE_WORKOUT_GROUP_ID,
   FREE_WORKOUT_NAME,
   buildActiveWorkoutSessionDraft,
-  buildCycleItems,
   buildExerciseCreationData,
   buildExerciseEditingData,
   buildExerciseSummariesByMuscleGroup,
@@ -45,10 +46,6 @@ import { buildProgressionAdvice, getProgressionWeightStep } from "./domain/progr
 import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
 import { icon } from "./ui/icons.js";
 import editIconSrc from "./assets/icons/edit.svg";
-import gym1Src from "./assets/illustrations/gym1.svg";
-import gym2Src from "./assets/illustrations/gym2.svg";
-import gym3Src from "./assets/illustrations/gym3.svg";
-import gym4Src from "./assets/illustrations/gym4.svg";
 import "./styles.css";
 
 const TABS = [
@@ -57,7 +54,24 @@ const TABS = [
   { id: "journal", label: "Журнал", icon: "journal" },
 ];
 
-const WORKOUT_IMAGES = [gym1Src, gym2Src, gym3Src, gym4Src];
+const workoutIllustrationModules = import.meta.glob("./assets/illustrations/*.svg", {
+  eager: true,
+  import: "default",
+});
+const WORKOUT_ILLUSTRATIONS = Object.fromEntries(
+  Object.entries(workoutIllustrationModules).map(([path, source]) => [
+    path.split("/").pop().replace(/\.svg$/, ""),
+    source,
+  ]),
+);
+const SINGLE_MUSCLE_ILLUSTRATION_KEYS = {
+  chest: "chest_biceps",
+  back: "back_biceps",
+  biceps: "biceps_shoulders",
+  triceps: "triceps_biceps",
+  legs: "legs_shoulders",
+  shoulders: "biceps_shoulders",
+};
 const workoutImagePreloadCache = new Map();
 const HISTORY_TAG = "gym-app-react";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
@@ -116,8 +130,31 @@ const secondaryScreenTransition = {
 
 const TEMPLATE_EXERCISE_ANIMATION_MS = 170;
 
-function preloadWorkoutImages() {
-  WORKOUT_IMAGES.forEach((source) => {
+function getWorkoutIllustration(muscleGroupIds) {
+  const [firstMuscleGroupId, secondMuscleGroupId] = muscleGroupIds ?? [];
+  const singleMuscleKey = secondMuscleGroupId
+    ? null
+    : SINGLE_MUSCLE_ILLUSTRATION_KEYS[firstMuscleGroupId];
+  const directKey = [firstMuscleGroupId, secondMuscleGroupId].filter(Boolean).join("_");
+  const reverseKey = [secondMuscleGroupId, firstMuscleGroupId].filter(Boolean).join("_");
+  let key = "my_plan";
+
+  if (singleMuscleKey && WORKOUT_ILLUSTRATIONS[singleMuscleKey]) {
+    key = singleMuscleKey;
+  } else if (WORKOUT_ILLUSTRATIONS[directKey]) {
+    key = directKey;
+  } else if (WORKOUT_ILLUSTRATIONS[reverseKey]) {
+    key = reverseKey;
+  }
+
+  return {
+    key,
+    source: WORKOUT_ILLUSTRATIONS[key] ?? null,
+  };
+}
+
+function preloadWorkoutImages(sources) {
+  sources.forEach((source) => {
     if (!source || workoutImagePreloadCache.has(source)) {
       return;
     }
@@ -151,9 +188,10 @@ function createInitialState() {
     journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     journalView: { name: "overview", workoutLogId: null },
     notices: [],
-    planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
+    planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
     templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
     templateSelector: null,
+    trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
   };
 }
 
@@ -175,20 +213,24 @@ function normalizeHomeView(view) {
 
 function normalizePlanView(view) {
   switch (view?.name) {
+    case "createTrainingDay":
+      return { name: "createTrainingDay", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null };
+    case "editTrainingDay":
+      return { name: "editTrainingDay", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: view.trainingDayId };
     case "templates":
-      return { name: "templates", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null };
+      return { name: "templates", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null, trainingDayId: null };
     case "createTemplate":
-      return { name: "createTemplate", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null };
+      return { name: "createTemplate", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null, trainingDayId: null };
     case "editTemplate":
-      return { name: "editTemplate", muscleGroupId: view.muscleGroupId, templateId: view.templateId, exerciseId: null };
+      return { name: "editTemplate", muscleGroupId: view.muscleGroupId, templateId: view.templateId, exerciseId: null, trainingDayId: null };
     case "exercises":
-      return { name: "exercises", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null };
+      return { name: "exercises", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null, trainingDayId: null };
     case "createExercise":
-      return { name: "createExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null };
+      return { name: "createExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null, trainingDayId: null };
     case "editExercise":
-      return { name: "editExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: view.exerciseId };
+      return { name: "editExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: view.exerciseId, trainingDayId: null };
     default:
-      return { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null };
+      return { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null };
   }
 }
 
@@ -310,6 +352,9 @@ function getPlanBackTarget(planView) {
   const normalized = normalizePlanView(planView);
 
   switch (normalized.name) {
+    case "createTrainingDay":
+    case "editTrainingDay":
+      return { activeTab: "plan", planView: { name: "overview" } };
     case "templates":
     case "exercises":
       return { activeTab: "plan", planView: { name: "overview" } };
@@ -859,6 +904,51 @@ function createId(prefix) {
   return `${prefix}-${safeRandom}`;
 }
 
+function getSortedWorkoutGroups(data) {
+  return [...(data?.workoutGroups ?? [])]
+    .sort((first, second) => Number(first.orderIndex ?? 0) - Number(second.orderIndex ?? 0));
+}
+
+function buildTrainingDayName(data, muscleGroupIds) {
+  const muscleGroupsById = indexById(data?.muscleGroups ?? []);
+
+  return muscleGroupIds
+    .map((muscleGroupId) => muscleGroupsById.get(muscleGroupId)?.name)
+    .filter(Boolean)
+    .join(" + ");
+}
+
+function getTrainingDayCombinationKey(muscleGroupIds) {
+  return [...muscleGroupIds].sort().join("|");
+}
+
+function buildWorkoutGroupTemplateSelections(data, workoutGroup, muscleGroupIds) {
+  const selectedTemplateByMuscleGroupId = {};
+  const selectedTemplateOverrideByMuscleGroupId = {};
+  const templateSource = workoutGroup ?? {
+    selectedTemplateByMuscleGroupId: {},
+    selectedTemplateOverrideByMuscleGroupId: {},
+  };
+
+  muscleGroupIds.forEach((muscleGroupId) => {
+    const templateId = getSelectedTemplateIdForMuscleGroup(data, templateSource, muscleGroupId);
+
+    if (templateId) {
+      selectedTemplateByMuscleGroupId[muscleGroupId] = templateId;
+    }
+
+    selectedTemplateOverrideByMuscleGroupId[muscleGroupId] = Boolean(
+      workoutGroup?.selectedTemplateOverrideByMuscleGroupId?.[muscleGroupId] &&
+      workoutGroup.selectedTemplateByMuscleGroupId?.[muscleGroupId] === templateId,
+    );
+  });
+
+  return {
+    selectedTemplateByMuscleGroupId,
+    selectedTemplateOverrideByMuscleGroupId,
+  };
+}
+
 function getViewElement() {
   return document.getElementById("view");
 }
@@ -884,6 +974,7 @@ function getViewScrollKey(appState) {
         normalized.muscleGroupId || "",
         normalized.templateId || "",
         normalized.exerciseId || "",
+        normalized.trainingDayId || "",
       ].join(":");
     }
     case "journal": {
@@ -1464,8 +1555,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    preloadWorkoutImages();
-  }, []);
+    const workoutGroups = state.data?.workoutGroups ?? [];
+    const imageSources = workoutGroups.map((workoutGroup) => getWorkoutIllustration(workoutGroup.muscleGroupIds).source);
+
+    imageSources.push(WORKOUT_ILLUSTRATIONS.my_plan);
+    preloadWorkoutImages(imageSources);
+  }, [state.data?.workoutGroups]);
 
   useEffect(() => {
     const handlePointerMove = (event) => {
@@ -1587,6 +1682,209 @@ function App() {
     },
     [navigate],
   );
+
+  const openTrainingDayCreate = useCallback(() => {
+    navigate({
+      activeTab: "plan",
+      planView: { name: "createTrainingDay" },
+      trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
+    });
+  }, [navigate]);
+
+  const openTrainingDayEdit = useCallback(
+    (trainingDayId) => {
+      const trainingDay = stateRef.current.data.workoutGroups.find((item) => item.id === trainingDayId);
+
+      if (!trainingDay) {
+        showNotice("Тренировочный день не найден", "error");
+        return;
+      }
+
+      navigate({
+        activeTab: "plan",
+        planView: { name: "editTrainingDay", trainingDayId },
+        trainingDayDraft: {
+          id: trainingDay.id,
+          selectedMuscleGroupIds: [...trainingDay.muscleGroupIds],
+        },
+      });
+    },
+    [navigate, showNotice],
+  );
+
+  const toggleTrainingDayMuscleGroup = useCallback(
+    (muscleGroupId) => {
+      const selectedMuscleGroupIds = stateRef.current.trainingDayDraft.selectedMuscleGroupIds;
+
+      if (selectedMuscleGroupIds.includes(muscleGroupId)) {
+        patchState({
+          trainingDayDraft: {
+            ...stateRef.current.trainingDayDraft,
+            selectedMuscleGroupIds: selectedMuscleGroupIds.filter((id) => id !== muscleGroupId),
+          },
+        });
+        return;
+      }
+
+      if (selectedMuscleGroupIds.length >= 2) {
+        showNotice("Можно выбрать до двух групп мышц", "error");
+        return;
+      }
+
+      patchState({
+        trainingDayDraft: {
+          ...stateRef.current.trainingDayDraft,
+          selectedMuscleGroupIds: [...selectedMuscleGroupIds, muscleGroupId],
+        },
+      });
+    },
+    [patchState, showNotice],
+  );
+
+  const handleSaveTrainingDay = useCallback(
+    async (event) => {
+      event.preventDefault();
+      const current = stateRef.current;
+      const { data } = current;
+      const selectedMuscleGroupIds = current.trainingDayDraft.selectedMuscleGroupIds;
+
+      if (!selectedMuscleGroupIds.length) {
+        showNotice("Выберите хотя бы одну группу мышц", "error");
+        return;
+      }
+
+      const trainingDays = getSortedWorkoutGroups(data);
+      const existingWorkoutGroup = current.trainingDayDraft.id
+        ? data.workoutGroups.find((item) => item.id === current.trainingDayDraft.id)
+        : null;
+      const trainingDayId = existingWorkoutGroup?.id ?? createId("workout-group");
+      const combinationKey = getTrainingDayCombinationKey(selectedMuscleGroupIds);
+      const hasDuplicate = trainingDays.some(
+        (item) => item.id !== trainingDayId && getTrainingDayCombinationKey(item.muscleGroupIds) === combinationKey,
+      );
+
+      if (hasDuplicate) {
+        showNotice("Такая комбинация уже добавлена", "error");
+        return;
+      }
+
+      const hasActiveWorkout = data.activeWorkoutSessions.some(
+        (session) => session.workoutGroupId === existingWorkoutGroup?.id,
+      );
+      const muscleGroupOrderChanged =
+        existingWorkoutGroup &&
+        JSON.stringify(existingWorkoutGroup.muscleGroupIds ?? []) !== JSON.stringify(selectedMuscleGroupIds);
+
+      if (hasActiveWorkout && muscleGroupOrderChanged) {
+        const shouldReplaceActiveWorkout = window.confirm(
+          "Есть незавершённая тренировка. При изменении групп мышц она будет удалена. Продолжить?",
+        );
+
+        if (!shouldReplaceActiveWorkout) {
+          return;
+        }
+      }
+
+      const templateSelections = buildWorkoutGroupTemplateSelections(
+        data,
+        existingWorkoutGroup,
+        selectedMuscleGroupIds,
+      );
+      const nextTrainingDay = {
+        ...(existingWorkoutGroup ?? {}),
+        id: trainingDayId,
+        name: buildTrainingDayName(data, selectedMuscleGroupIds),
+        muscleGroupIds: [...selectedMuscleGroupIds],
+        ...templateSelections,
+        orderIndex:
+          existingWorkoutGroup?.orderIndex ??
+          trainingDays.reduce((maximum, item) => Math.max(maximum, Number(item.orderIndex ?? -1)), -1) + 1,
+      };
+
+      try {
+        const shouldDeleteActiveWorkout = Boolean(hasActiveWorkout && muscleGroupOrderChanged);
+
+        if (shouldDeleteActiveWorkout) {
+          await activeWorkoutSaveQueueRef.current.catch(() => {});
+        }
+
+        await saveWorkoutGroup(nextTrainingDay, {
+          deleteActiveSessions: shouldDeleteActiveWorkout,
+        });
+        await refreshData();
+        navigate(
+          {
+            activeTab: "plan",
+            activeExerciseReplacement: shouldDeleteActiveWorkout ? null : current.activeExerciseReplacement,
+            activeWorkoutSession:
+              shouldDeleteActiveWorkout && current.activeWorkoutSession?.workoutGroupId === trainingDayId
+                ? null
+                : current.activeWorkoutSession,
+            homeView:
+              shouldDeleteActiveWorkout && current.homeView.workoutGroupId === trainingDayId
+                ? { name: "preparation", workoutGroupId: trainingDayId }
+                : current.homeView,
+            planView: { name: "overview" },
+            trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
+          },
+          { history: "replace", scroll: "restore" },
+        );
+        showNotice(existingWorkoutGroup ? "Тренировочный день изменён" : "Тренировочный день добавлен");
+      } catch (error) {
+        console.error(error);
+        showNotice("Не удалось сохранить тренировочный день", "error");
+      }
+    },
+    [navigate, refreshData, showNotice],
+  );
+
+  const handleDeleteTrainingDay = useCallback(async () => {
+    const current = stateRef.current;
+    const trainingDayId = current.trainingDayDraft.id;
+
+    if (!trainingDayId) {
+      return;
+    }
+
+    const hasActiveWorkout = current.data.activeWorkoutSessions.some(
+      (session) => session.workoutGroupId === trainingDayId,
+    );
+    const confirmationMessage = hasActiveWorkout
+      ? "Есть незавершённая тренировка. При удалении тренировочного дня она тоже будет удалена. Продолжить?"
+      : "Удалить тренировочный день?";
+
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    try {
+      await activeWorkoutSaveQueueRef.current.catch(() => {});
+      const result = await deleteWorkoutGroup(trainingDayId);
+
+      await refreshData();
+      navigate(
+        {
+          activeTab: "plan",
+          activeExerciseReplacement: null,
+          activeWorkoutSession:
+            current.activeWorkoutSession?.workoutGroupId === trainingDayId
+              ? null
+              : current.activeWorkoutSession,
+          homeView:
+            current.homeView.workoutGroupId === trainingDayId
+              ? { name: "overview", workoutGroupId: null }
+              : current.homeView,
+          planView: { name: "overview" },
+          trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
+        },
+        { history: "replace", scroll: "restore" },
+      );
+      showNotice(result.status === "missing" ? "Тренировочный день уже удалён" : "Тренировочный день удалён");
+    } catch (error) {
+      console.error(error);
+      showNotice("Не удалось удалить тренировочный день", "error");
+    }
+  }, [navigate, refreshData, showNotice]);
 
   const openTemplateGroup = useCallback(
     (muscleGroupId) => {
@@ -2530,9 +2828,10 @@ function App() {
             journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
             journalView: { name: "overview", workoutLogId: null },
             notices: [],
-            planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null },
+            planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
             templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
             templateSelector: null,
+            trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
           },
           { history: "replace", scroll: "top" },
         );
@@ -2654,7 +2953,14 @@ function App() {
             planView={state.planView}
             templateDraft={state.templateDraft}
             exerciseDraft={state.exerciseDraft}
+            trainingDayDraft={state.trainingDayDraft}
+            trainingDays={getSortedWorkoutGroups(state.data)}
             onBack={goBack}
+            onDeleteTrainingDay={handleDeleteTrainingDay}
+            onOpenTrainingDayCreate={openTrainingDayCreate}
+            onOpenTrainingDayEdit={openTrainingDayEdit}
+            onSaveTrainingDay={handleSaveTrainingDay}
+            onToggleTrainingDayMuscleGroup={toggleTrainingDayMuscleGroup}
             onOpenTemplateGroup={openTemplateGroup}
             onOpenTemplateCreate={openTemplateCreate}
             onOpenTemplateEdit={openTemplateEdit}
@@ -2722,6 +3028,7 @@ function App() {
     handleClearWorkouts,
     handleDeleteExercise,
     handleDeleteTemplate,
+    handleDeleteTrainingDay,
     handleDeleteWorkoutLog,
     handleExerciseNameChange,
     handleExerciseMediaUrlChange,
@@ -2731,6 +3038,7 @@ function App() {
     handleImportData,
     handleSaveExercise,
     handleSaveTemplate,
+    handleSaveTrainingDay,
     handleTemplateDefaultChange,
     handleTemplateDragStart,
     handleTemplateNameChange,
@@ -2748,6 +3056,8 @@ function App() {
     openTemplateEdit,
     openTemplateGroup,
     openTemplateSelector,
+    openTrainingDayCreate,
+    openTrainingDayEdit,
     openWorkoutPreparation,
     removeDraftExercise,
     removeFreeWorkoutExercise,
@@ -2765,6 +3075,8 @@ function App() {
     state.journalView,
     state.planView,
     state.templateDraft,
+    state.trainingDayDraft,
+    toggleTrainingDayMuscleGroup,
     toggleJournalFilterExercise,
     toggleJournalFilterMuscleGroup,
   ]);
@@ -3054,26 +3366,35 @@ function HomeView({
 
   const workoutCards = buildWorkoutGroupCards(data);
   const freeWorkoutCard = buildFreeWorkoutCard(data);
+  const homeCardCount = workoutCards.length + 1;
+  const isFittedList = homeCardCount === 4;
   return (
     <section className="screen home-screen">
       <header className="screen-header">
         <h1>Главная</h1>
       </header>
 
-      <div className="workout-list home-workout-list">
-        {workoutCards.map((card, index) => (
-          <WorkoutCard
-            key={card.workoutGroup.id}
-            card={card}
-            illustrationIndex={index + 1}
-            imageSrc={WORKOUT_IMAGES[index % WORKOUT_IMAGES.length]}
-            onOpen={() => onOpenWorkoutPreparation(card.workoutGroup.id)}
-          />
-        ))}
+      <div
+        className={`workout-list home-workout-list ${isFittedList ? "is-fitted" : "is-fixed"}`}
+        style={isFittedList ? { "--home-workout-card-count": homeCardCount } : undefined}
+      >
+        {workoutCards.map((card) => {
+          const illustration = getWorkoutIllustration(card.workoutGroup.muscleGroupIds);
+
+          return (
+            <WorkoutCard
+              key={card.workoutGroup.id}
+              card={card}
+              illustrationKey={illustration.key}
+              imageSrc={illustration.source}
+              onOpen={() => onOpenWorkoutPreparation(card.workoutGroup.id)}
+            />
+          );
+        })}
         <WorkoutCard
           card={freeWorkoutCard}
-          illustrationIndex={4}
-          imageSrc={gym4Src}
+          illustrationKey="my_plan"
+          imageSrc={WORKOUT_ILLUSTRATIONS.my_plan}
           onOpen={onOpenFreeWorkoutPreparation}
         />
       </div>
@@ -3081,7 +3402,7 @@ function HomeView({
   );
 }
 
-function WorkoutCard({ card, illustrationIndex, imageSrc, onOpen }) {
+function WorkoutCard({ card, illustrationKey, imageSrc, onOpen }) {
   const nameParts =
     card.workoutGroup.id === FREE_WORKOUT_GROUP_ID
       ? ["Свой", "План"]
@@ -3089,7 +3410,7 @@ function WorkoutCard({ card, illustrationIndex, imageSrc, onOpen }) {
   const lastDoneLabel = formatLastWorkoutLabel(card.lastWorkoutDate);
 
   return (
-    <button className="workout-card workout-card-button" type="button" data-illustration={illustrationIndex} onClick={onOpen}>
+    <button className="workout-card workout-card-button" type="button" data-illustration={illustrationKey} onClick={onOpen}>
       <div className="workout-card-content">
         <div className="workout-card-copy">
           <h2 className={`workout-name-stack${nameParts.length > 1 ? "" : " is-single-name"}`} aria-label={card.workoutGroup.name}>
@@ -3924,7 +4245,14 @@ function PlanView({
   planView,
   templateDraft,
   exerciseDraft,
+  trainingDayDraft,
+  trainingDays,
   onBack,
+  onDeleteTrainingDay,
+  onOpenTrainingDayCreate,
+  onOpenTrainingDayEdit,
+  onSaveTrainingDay,
+  onToggleTrainingDayMuscleGroup,
   onOpenTemplateGroup,
   onOpenTemplateCreate,
   onOpenTemplateEdit,
@@ -3947,6 +4275,20 @@ function PlanView({
   onImportData,
   onClearWorkouts,
 }) {
+  if (planView.name === "createTrainingDay" || planView.name === "editTrainingDay") {
+    return (
+      <TrainingDayFormScreen
+        data={data}
+        draft={trainingDayDraft}
+        isEdit={planView.name === "editTrainingDay"}
+        onBack={onBack}
+        onDelete={onDeleteTrainingDay}
+        onSave={onSaveTrainingDay}
+        onToggleMuscleGroup={onToggleTrainingDayMuscleGroup}
+      />
+    );
+  }
+
   if (planView.name === "templates") {
     return (
       <TemplatesScreen
@@ -4009,6 +4351,9 @@ function PlanView({
   return (
     <PlanOverview
       data={data}
+      trainingDays={trainingDays}
+      onOpenTrainingDayCreate={onOpenTrainingDayCreate}
+      onOpenTrainingDayEdit={onOpenTrainingDayEdit}
       onOpenTemplateGroup={onOpenTemplateGroup}
       onOpenExerciseGroup={onOpenExerciseGroup}
       onExportData={onExportData}
@@ -4020,13 +4365,15 @@ function PlanView({
 
 function PlanOverview({
   data,
+  trainingDays,
+  onOpenTrainingDayCreate,
+  onOpenTrainingDayEdit,
   onOpenTemplateGroup,
   onOpenExerciseGroup,
   onExportData,
   onImportData,
   onClearWorkouts,
 }) {
-  const cycleItems = buildCycleItems(data);
   const templateSummaries = buildTemplateSummariesByMuscleGroup(data);
   const exerciseSummaries = buildExerciseSummariesByMuscleGroup(data);
 
@@ -4038,17 +4385,28 @@ function PlanOverview({
 
       <section className="panel plan-section">
         <div className="section-title">
-          <span>Тренировочный цикл</span>
-          <small>{cycleItems.length} тренировки</small>
+          <span>Тренировочные дни</span>
         </div>
         <div className="plan-list">
-          {cycleItems.map((item) => (
-            <div key={item.workoutGroup.id} className="plan-row plan-cycle-row">
-              <strong>{item.workoutGroup.name}</strong>
-              <ClickIndicator />
-            </div>
-          ))}
+          {trainingDays.length ? (
+            trainingDays.map((trainingDay) => (
+              <button
+                key={trainingDay.id}
+                className="plan-row training-day-row"
+                type="button"
+                onClick={() => onOpenTrainingDayEdit(trainingDay.id)}
+              >
+                <strong>{trainingDay.name}</strong>
+                <ClickIndicator />
+              </button>
+            ))
+          ) : (
+            <p className="training-day-empty">Тренировочных дней пока нет</p>
+          )}
         </div>
+        <button className="action-button training-day-add-button" type="button" onClick={onOpenTrainingDayCreate}>
+          <span>Добавить тренировку</span>
+        </button>
       </section>
 
       <section className="panel plan-section">
@@ -4116,6 +4474,64 @@ function PlanOverview({
           </button>
         </div>
       </section>
+    </section>
+  );
+}
+
+function TrainingDayFormScreen({ data, draft, isEdit, onBack, onDelete, onSave, onToggleMuscleGroup }) {
+  const selectedMuscleGroupIds = draft.selectedMuscleGroupIds ?? [];
+  const muscleGroups = [...data.muscleGroups].sort(
+    (first, second) => Number(first.sortOrder ?? 0) - Number(second.sortOrder ?? 0),
+  );
+  const trainingDayName = buildTrainingDayName(data, selectedMuscleGroupIds);
+
+  return (
+    <section className="screen plan-screen">
+      <header className="screen-header">
+        <ScreenTitle onBack={onBack}>{isEdit ? "Тренировка" : "Новая тренировка"}</ScreenTitle>
+      </header>
+
+      <form className="training-day-form" onSubmit={onSave}>
+        <section className="panel plan-section">
+          <div className="section-title">
+            <span>Группы мышц</span>
+            <small>до 2 групп</small>
+          </div>
+
+          <div className="muscle-chip-list">
+            {muscleGroups.map((muscleGroup) => {
+              const selectedIndex = selectedMuscleGroupIds.indexOf(muscleGroup.id);
+              const isSelected = selectedIndex >= 0;
+
+              return (
+                <button
+                  key={muscleGroup.id}
+                  className={`muscle-chip-button training-day-muscle-chip${isSelected ? " is-selected" : ""}`}
+                  type="button"
+                  aria-pressed={isSelected}
+                  onClick={() => onToggleMuscleGroup(muscleGroup.id)}
+                >
+                  <span>{muscleGroup.name}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="training-day-name-preview">
+            <strong>{trainingDayName || "Выбери группы мышц"}</strong>
+          </div>
+        </section>
+
+        <button className="action-button" type="submit" disabled={!selectedMuscleGroupIds.length}>
+          <span>Сохранить тренировку</span>
+        </button>
+
+        {isEdit ? (
+          <button className="action-button danger-action" type="button" onClick={onDelete}>
+            <span>Удалить тренировку</span>
+          </button>
+        ) : null}
+      </form>
     </section>
   );
 }

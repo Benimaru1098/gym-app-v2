@@ -7,10 +7,6 @@ export function indexById(items) {
   return new Map(items.map((item) => [item.id, item]));
 }
 
-export function getDefaultCycle(data) {
-  return data.workoutCycles.find((cycle) => cycle.id === "cycle-default") ?? data.workoutCycles[0];
-}
-
 function getWorkoutLogGroupId(log) {
   return (
     log.workoutGroupId ??
@@ -20,11 +16,28 @@ function getWorkoutLogGroupId(log) {
   );
 }
 
+function getMuscleGroupCombinationKey(muscleGroupIds) {
+  return Array.isArray(muscleGroupIds) && muscleGroupIds.length
+    ? [...muscleGroupIds].sort().join("|")
+    : null;
+}
+
 function isWorkoutLogForGroup(log, workoutGroup) {
   const logGroupId = getWorkoutLogGroupId(log);
+  const logCombinationKey = getMuscleGroupCombinationKey(
+    log.workoutGroupSnapshot?.muscleGroupIds,
+  );
+  const currentCombinationKey = getMuscleGroupCombinationKey(workoutGroup.muscleGroupIds);
+  const hasMatchingCombination = Boolean(
+    logCombinationKey && currentCombinationKey && logCombinationKey === currentCombinationKey,
+  );
 
   if (logGroupId) {
-    return logGroupId === workoutGroup.id;
+    if (logGroupId === workoutGroup.id) {
+      return logCombinationKey && currentCombinationKey ? hasMatchingCombination : true;
+    }
+
+    return hasMatchingCombination;
   }
 
   return log.workoutGroupSnapshot?.name === workoutGroup.name;
@@ -1085,28 +1098,4 @@ export function buildExerciseEditingData(data, exerciseId) {
     ...creationData,
     exercise,
   };
-}
-
-export function buildCycleItems(data) {
-  const workoutGroupsById = indexById(data.workoutGroups);
-  const cycle = getDefaultCycle(data);
-
-  if (!cycle) {
-    return [];
-  }
-
-  return cycle.workoutGroupIds
-    .map((workoutGroupId, index) => {
-      const workoutGroup = workoutGroupsById.get(workoutGroupId);
-
-      if (!workoutGroup) {
-        return null;
-      }
-
-      return {
-        workoutGroup,
-        index,
-      };
-    })
-    .filter(Boolean);
 }

@@ -6,7 +6,7 @@ import {
 import { SCHEMA_VERSION, createInitialData, initialData } from "./seed.js";
 
 const DB_NAME = "gym-cycle-db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORE_NAMES = [
   "metadata",
@@ -14,10 +14,11 @@ const STORE_NAMES = [
   "exercises",
   "exerciseTemplates",
   "workoutGroups",
-  "workoutCycles",
   "workoutLogs",
   "activeWorkoutSessions",
 ];
+
+const LEGACY_STORE_NAMES = ["workoutCycles"];
 
 const EXPORT_APP_ID = "gym-app";
 const EXPORT_FORMAT = "gym-app-data-export";
@@ -27,7 +28,6 @@ const TRANSFER_STORE_NAMES = [
   "exercises",
   "exerciseTemplates",
   "workoutGroups",
-  "workoutCycles",
   "workoutLogs",
 ];
 
@@ -54,12 +54,21 @@ function createStores(database) {
   }
 }
 
+function removeLegacyStores(database) {
+  for (const storeName of LEGACY_STORE_NAMES) {
+    if (database.objectStoreNames.contains(storeName)) {
+      database.deleteObjectStore(storeName);
+    }
+  }
+}
+
 export function openAppDatabase() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = () => {
       createStores(request.result);
+      removeLegacyStores(request.result);
     };
 
     request.onsuccess = () => resolve(request.result);
@@ -104,6 +113,18 @@ function normalizeExercise(exercise) {
     mediaUrl: typeof exercise.mediaUrl === "string" ? exercise.mediaUrl.trim() : "",
     isArchived: Boolean(exercise.isArchived),
     usageCount: Number(exercise.usageCount ?? 0),
+  };
+}
+
+function normalizeWorkoutGroup(workoutGroup) {
+  return {
+    ...workoutGroup,
+    muscleGroupIds: [...(workoutGroup.muscleGroupIds ?? [])],
+    selectedTemplateByMuscleGroupId: { ...(workoutGroup.selectedTemplateByMuscleGroupId ?? {}) },
+    selectedTemplateOverrideByMuscleGroupId: {
+      ...(workoutGroup.selectedTemplateOverrideByMuscleGroupId ?? {}),
+    },
+    orderIndex: Number(workoutGroup.orderIndex ?? 0),
   };
 }
 
@@ -249,10 +270,6 @@ async function seedDatabase(database) {
     transaction.objectStore("workoutGroups").put(workoutGroup);
   }
 
-  for (const cycle of data.workoutCycles) {
-    transaction.objectStore("workoutCycles").put(cycle);
-  }
-
   await done;
   return data;
 }
@@ -287,7 +304,6 @@ export async function loadAppData() {
       exercises,
       exerciseTemplates,
       workoutGroups,
-      workoutCycles,
       workoutLogs,
       activeWorkoutSessions,
     ] = await Promise.all([
@@ -296,7 +312,6 @@ export async function loadAppData() {
       readStore(database, "exercises"),
       readStore(database, "exerciseTemplates"),
       readStore(database, "workoutGroups"),
-      readStore(database, "workoutCycles"),
       readStore(database, "workoutLogs"),
       readStore(database, "activeWorkoutSessions"),
     ]);
@@ -306,8 +321,7 @@ export async function loadAppData() {
       muscleGroups,
       exercises: exercises.map(normalizeExercise),
       exerciseTemplates,
-      workoutGroups,
-      workoutCycles,
+      workoutGroups: workoutGroups.map(normalizeWorkoutGroup),
       workoutLogs,
       activeWorkoutSessions,
     };
@@ -332,8 +346,7 @@ export async function exportAppData() {
       muscleGroups: [...data.muscleGroups].sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0)),
       exercises: data.exercises.map(normalizeExercise),
       exerciseTemplates: data.exerciseTemplates.map(normalizeExerciseTemplate),
-      workoutGroups: data.workoutGroups,
-      workoutCycles: data.workoutCycles,
+      workoutGroups: data.workoutGroups.map(normalizeWorkoutGroup),
       workoutLogs: [...data.workoutLogs].sort((a, b) => {
         const firstDate = new Date(a.date ?? a.completedAt ?? 0).getTime();
         const secondDate = new Date(b.date ?? b.completedAt ?? 0).getTime();
@@ -394,6 +407,7 @@ function normalizeImportedData(payload) {
 
   normalizedData.exercises = normalizedData.exercises.map(normalizeExercise);
   normalizedData.exerciseTemplates = normalizedData.exerciseTemplates.map(normalizeExerciseTemplate);
+  normalizedData.workoutGroups = normalizedData.workoutGroups.map(normalizeWorkoutGroup);
 
   for (const muscleGroup of normalizedData.muscleGroups) {
     normalizedData.exerciseTemplates = getNormalizedTemplatesForMuscleGroup(
@@ -450,6 +464,98 @@ export async function importAppData(payload) {
         TRANSFER_STORE_NAMES.map((storeName) => [storeName, importedData[storeName].length]),
       ),
     };
+  } finally {
+    database.close();
+  }
+}
+
+export async function saveWorkoutGroup(workoutGroup, { deleteActiveSessions = false } = {}) {
+  const normalizedWorkoutGroup = normalizeWorkoutGroup(workoutGroup);
+
+  if (!normalizedWorkoutGroup.id || !normalizedWorkoutGroup.name || !normalizedWorkoutGroup.muscleGroupIds.length) {
+    throw new Error("Invalid workout group");
+  }
+
+  const database = await openAppDatabase();
+
+  try {
+    const [metadata, activeWorkoutSessions] = await Promise.all([
+      readMetadata(database),
+      deleteActiveSessions ? readStore(database, "activeWorkoutSessions") : Promise.resolve([]),
+    ]);
+    const storeNames = deleteActiveSessions
+      ? ["metadata", "workoutGroups", "activeWorkoutSessions"]
+      : ["metadata", "workoutGroups"];
+    const transaction = database.transaction(storeNames, "readwrite");
+    const done = transactionDone(transaction);
+    const now = new Date().toISOString();
+
+    transaction.objectStore("workoutGroups").put(normalizedWorkoutGroup);
+    if (deleteActiveSessions) {
+      const activeWorkoutSessionStore = transaction.objectStore("activeWorkoutSessions");
+
+      activeWorkoutSessions
+        .filter((session) => session.workoutGroupId === normalizedWorkoutGroup.id)
+        .forEach((session) => activeWorkoutSessionStore.delete(session.id));
+    }
+    transaction.objectStore("metadata").put({
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: metadata?.createdAt ?? now,
+      updatedAt: now,
+    });
+
+    await done;
+    return normalizedWorkoutGroup;
+  } finally {
+    database.close();
+  }
+}
+
+export async function deleteWorkoutGroup(workoutGroupId) {
+  const database = await openAppDatabase();
+
+  try {
+    const [metadata, workoutGroups, activeWorkoutSessions] = await Promise.all([
+      readMetadata(database),
+      readStore(database, "workoutGroups"),
+      readStore(database, "activeWorkoutSessions"),
+    ]);
+    const workoutGroup = workoutGroups.find((item) => item.id === workoutGroupId);
+
+    if (!workoutGroup) {
+      return { status: "missing" };
+    }
+
+    const sessionsToDelete = activeWorkoutSessions.filter(
+      (session) => session.workoutGroupId === workoutGroupId,
+    );
+
+    const remainingWorkoutGroups = workoutGroups
+      .filter((item) => item.id !== workoutGroupId)
+      .sort((first, second) => Number(first.orderIndex ?? 0) - Number(second.orderIndex ?? 0))
+      .map((item, orderIndex) => normalizeWorkoutGroup({ ...item, orderIndex }));
+    const transaction = database.transaction(
+      ["metadata", "workoutGroups", "activeWorkoutSessions"],
+      "readwrite",
+    );
+    const done = transactionDone(transaction);
+    const workoutGroupStore = transaction.objectStore("workoutGroups");
+    const activeWorkoutSessionStore = transaction.objectStore("activeWorkoutSessions");
+    const now = new Date().toISOString();
+
+    workoutGroupStore.delete(workoutGroupId);
+    remainingWorkoutGroups.forEach((item) => workoutGroupStore.put(item));
+    sessionsToDelete.forEach((session) => activeWorkoutSessionStore.delete(session.id));
+    transaction.objectStore("metadata").put({
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: metadata?.createdAt ?? now,
+      updatedAt: now,
+    });
+
+    await done;
+    return { status: "deleted", deletedActiveSessionCount: sessionsToDelete.length };
   } finally {
     database.close();
   }
