@@ -1300,11 +1300,12 @@ h2 {
 }
 
 .active-add-set-button {
-  justify-self: start;
-  width: auto;
+  justify-self: center;
+  width: 84%;
   min-height: 40px;
   padding: 8px 12px;
   font-size: 14px;
+  margin-left: -5px;
 }
 
 .active-navigation-actions {
