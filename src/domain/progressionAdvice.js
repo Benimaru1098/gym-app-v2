@@ -205,89 +205,8 @@ function getCurrentExercisePosition(session, exerciseIndex, exerciseLog) {
   };
 }
 
-function roundToQuarter(value) {
-  return Number((Math.round(value * 4) / 4).toFixed(2));
-}
-
-function inferStepFromWeights(weights) {
-  const sortedWeights = weights
-    .filter((weight) => weight > 0)
-    .sort((first, second) => first - second);
-  const uniqueWeights = [];
-
-  for (const weight of sortedWeights) {
-    if (!uniqueWeights.some((item) => sameWeight(item, weight))) {
-      uniqueWeights.push(weight);
-    }
-  }
-
-  const stepCounts = new Map();
-
-  for (let index = 1; index < uniqueWeights.length; index += 1) {
-    const diff = roundToQuarter(uniqueWeights[index] - uniqueWeights[index - 1]);
-
-    if (diff <= 0 || diff > 20) {
-      continue;
-    }
-
-    stepCounts.set(diff, (stepCounts.get(diff) ?? 0) + 1);
-  }
-
-  const inferredStepEntry = [...stepCounts.entries()]
-    .filter(([step]) => step >= 0.5)
-    .sort((first, second) => second[1] - first[1] || first[0] - second[0])[0];
-
-  if (!inferredStepEntry) {
-    return null;
-  }
-
-  const [step] = inferredStepEntry;
-  return step;
-}
-
-function inferWeightStep(history, workingWeight) {
-  const inferredStep = inferStepFromWeights(
-    history.map((performance) => performance.workingWeight),
-  );
-
-  if (inferredStep) {
-    return inferredStep;
-  }
-
-  return workingWeight <= 15 ? 1 : 2.5;
-}
-
-export function getProgressionWeightStep({ data, exerciseId, fallbackWeight = 0 }) {
-  const history = exerciseId ? collectExerciseHistory(data, exerciseId) : [];
-  const fallback = parseWeightKg(fallbackWeight) ?? 0;
-  const workingWeight = history[0]?.workingWeight ?? fallback;
-
-  return inferWeightStep(history, workingWeight);
-}
-
-function roundWeightToStep(weight, step) {
-  return Number((Math.round(weight / step) * step).toFixed(2));
-}
-
-function getNextWeight(workingWeight, step) {
-  const roundedWeight = roundWeightToStep(workingWeight, step);
-  return Number((roundedWeight + step).toFixed(2));
-}
-
-function getPreviousWeight(workingWeight, step) {
-  const roundedWeight = roundWeightToStep(workingWeight, step);
-  return Math.max(step, Number((roundedWeight - step).toFixed(2)));
-}
-
-function formatWeight(weight) {
-  return Number.isInteger(weight) ? String(weight) : String(Number(weight.toFixed(2)));
-}
-
-function getIncreaseAdvice(performance, step) {
-  const nextWeight = getNextWeight(performance.workingWeight, step);
-  const diff = Number((nextWeight - performance.workingWeight).toFixed(2));
-
-  return `Попробуй ${formatWeight(nextWeight)} кг (+${formatWeight(diff)} кг) в рабочих подходах на 8–10 повторов.`;
+function getIncreaseAdvice() {
+  return "Попробуй +20% к рабочему весу в подходах на 8–10 повторов.";
 }
 
 function isLongBreak(lastPerformance, now) {
@@ -452,12 +371,10 @@ export function buildProgressionAdvice({ data, session, exerciseIndex, now = new
   const last = history[0];
   const previous = history[1];
   const currentPosition = getCurrentExercisePosition(session, exerciseIndex, exerciseLog);
-  const step = inferWeightStep(history, last.workingWeight);
-  const previousWeight = getPreviousWeight(last.workingWeight, step);
 
   if (isLongBreak(last, now)) {
     return {
-      text: `Был большой перерыв. Повтори прошлый вес или снизь до ${formatWeight(previousWeight)} кг.`,
+      text: "Был большой перерыв. Повтори прошлый вес или немного снизь нагрузку.",
       type: "long-break",
     };
   }
@@ -527,7 +444,7 @@ export function buildProgressionAdvice({ data, session, exerciseIndex, now = new
 
   if (isUpperRangeStable(history)) {
     return {
-      text: getIncreaseAdvice(last, step),
+      text: getIncreaseAdvice(),
       type: "stable-upper-range",
     };
   }
@@ -541,7 +458,7 @@ export function buildProgressionAdvice({ data, session, exerciseIndex, now = new
 
   if (isResultFalling(history)) {
     return {
-      text: "Повтори прошлый вес или снизь на один шаг, если снова не получится выйти к 8 повторениям.",
+      text: "Повтори прошлый вес или немного снизь нагрузку, если снова не получится выйти к 8 повторениям.",
       type: "falling-result",
     };
   }

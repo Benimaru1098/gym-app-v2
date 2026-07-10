@@ -42,7 +42,7 @@ import {
   getSelectedTemplateIdForMuscleGroup,
   indexById,
 } from "./domain/selectors.js";
-import { buildProgressionAdvice, getProgressionWeightStep } from "./domain/progressionAdvice.js";
+import { buildProgressionAdvice } from "./domain/progressionAdvice.js";
 import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
 import { icon } from "./ui/icons.js";
 import editIconSrc from "./assets/icons/edit.svg";
@@ -624,23 +624,15 @@ function formatActiveWeightValue(value) {
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
 }
 
-function getMaxActiveSetWeight(sets) {
-  return Math.max(
-    0,
-    ...(sets ?? [])
-      .map((set) => parseActiveWeightValue(set?.weightKg))
-      .filter((weight) => weight !== null && weight > 0),
-  );
-}
-
-function adjustActiveWeightValue(value, direction, step) {
+function adjustActiveWeightValue(value, direction) {
   const parsedValue = parseActiveWeightValue(value);
   if (parsedValue === null && direction < 0) {
     return "";
   }
 
   const currentValue = parsedValue ?? 0;
-  const nextValue = Math.max(0, currentValue + direction * step);
+  const fixedChange = currentValue <= 15 ? 1 : 2.5;
+  const nextValue = Math.max(0, currentValue + direction * fixedChange);
   if (nextValue <= 0) {
     return "";
   }
@@ -3989,11 +3981,6 @@ function ActiveWorkoutScreen({
   const isLastExercise = currentIndex >= session.exerciseLogs.length - 1;
   const sets = exerciseLog.sets?.length ? exerciseLog.sets : [{ setNumber: 1, weightKg: "", reps: "" }];
   const canRemoveSet = sets.length > 1;
-  const weightStep = getProgressionWeightStep({
-    data,
-    exerciseId: exerciseLog.exerciseId,
-    fallbackWeight: getMaxActiveSetWeight(sets),
-  });
   const exerciseFromBase = data?.exercises?.find((exercise) => exercise.id === exerciseLog.exerciseId) ?? null;
   const exerciseMediaUrl = (exerciseLog.mediaUrl || exerciseFromBase?.mediaUrl || "").trim();
   const techniqueExercise = {
@@ -4108,7 +4095,7 @@ function ActiveWorkoutScreen({
                     className="active-set-step-button plus-kg"
                     type="button"
                     aria-label={`Уменьшить вес в подходе ${index + 1}`}
-                    onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, -1, weightStep))}
+                    onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, -1))}
                   >
                     -
                   </button>
@@ -4124,7 +4111,7 @@ function ActiveWorkoutScreen({
                     className="active-set-step-button minus-kg"
                     type="button"
                     aria-label={`Увеличить вес в подходе ${index + 1}`}
-                    onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, 1, weightStep))}
+                    onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, 1))}
                   >
                     +
                   </button>
