@@ -174,7 +174,6 @@ function createInitialState() {
     activeTab: "home",
     activeWorkoutSession: null,
     activeExerciseReplacement: null,
-    canInstall: false,
     data: null,
     error: null,
     exerciseDraft: { name: "", mediaUrl: "" },
@@ -196,6 +195,10 @@ function createInitialState() {
 }
 
 function normalizeHomeView(view) {
+  if (view?.name === "settings") {
+    return { name: "settings", workoutGroupId: null };
+  }
+
   if (view?.name === "freePreparation") {
     return { name: "freePreparation", workoutGroupId: FREE_WORKOUT_GROUP_ID };
   }
@@ -1483,12 +1486,11 @@ function App() {
     const handleBeforeInstallPrompt = (event) => {
       event.preventDefault();
       deferredInstallPromptRef.current = event;
-      patchState({ canInstall: true });
     };
 
     const handleInstalled = () => {
       deferredInstallPromptRef.current = null;
-      patchState({ canInstall: false, isStandalone: true });
+      patchState({ isStandalone: true });
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -1615,8 +1617,7 @@ function App() {
     prompt.prompt();
     await prompt.userChoice;
     deferredInstallPromptRef.current = null;
-    patchState({ canInstall: false });
-  }, [patchState, showNotice]);
+  }, [showNotice]);
 
   const handleTabChange = useCallback(
     (tabId) => {
@@ -1664,6 +1665,10 @@ function App() {
     },
     [navigate],
   );
+
+  const openSettings = useCallback(() => {
+    navigate({ activeTab: "home", homeView: { name: "settings" } });
+  }, [navigate]);
 
   const openTrainingDayCreate = useCallback(() => {
     navigate({
@@ -2783,7 +2788,7 @@ function App() {
         scrollPositionsRef.current.clear();
         navigate(
           {
-            activeTab: "plan",
+            activeTab: "home",
             activeWorkoutSession: null,
             activeExerciseReplacement: null,
             data,
@@ -2791,7 +2796,7 @@ function App() {
             exerciseDraft: { name: "", mediaUrl: "" },
             exerciseTechniqueViewer: null,
             freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
-            homeView: { name: "overview", workoutGroupId: null },
+            homeView: { name: "settings", workoutGroupId: null },
             isLoading: false,
             journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
             journalView: { name: "overview", workoutLogId: null },
@@ -2901,6 +2906,7 @@ function App() {
             onActiveNextExercise={handleActiveNextExercise}
             onFinishActiveWorkout={handleFinishActiveWorkout}
             onOpenExerciseTechnique={openExerciseTechnique}
+            onOpenSettings={openSettings}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
             onOpenWorkoutPreparation={openWorkoutPreparation}
             onOpenTemplateSelector={openTemplateSelector}
@@ -2912,6 +2918,11 @@ function App() {
             onStartFreeWorkout={handleStartFreeWorkout}
             onContinueWorkout={handleContinueWorkout}
             onOpenFullWorkout={openJournalWorkout}
+            onExportData={handleExportData}
+            onImportData={handleImportData}
+            onClearWorkouts={handleClearWorkouts}
+            isStandalone={state.isStandalone}
+            onInstall={handleInstallApp}
           />
         );
       } else if (state.activeTab === "plan") {
@@ -2946,9 +2957,6 @@ function App() {
             onExerciseMediaUrlChange={handleExerciseMediaUrlChange}
             onSaveExercise={handleSaveExercise}
             onDeleteExercise={handleDeleteExercise}
-            onExportData={handleExportData}
-            onImportData={handleImportData}
-            onClearWorkouts={handleClearWorkouts}
           />
         );
       } else {
@@ -3003,6 +3011,7 @@ function App() {
     handleFinishActiveWorkout,
     handleContinueWorkout,
     handleImportData,
+    handleInstallApp,
     handleSaveExercise,
     handleSaveTemplate,
     handleSaveTrainingDay,
@@ -3016,6 +3025,7 @@ function App() {
     openExerciseReplacement,
     openExerciseTechnique,
     openFreeWorkoutPreparation,
+    openSettings,
     openJournalFilter,
     openJournalWorkout,
     openTemplateCreate,
@@ -3037,6 +3047,7 @@ function App() {
     state.freeWorkoutDraft,
     state.homeView,
     state.isLoading,
+    state.isStandalone,
     state.journalFilter,
     state.journalView,
     state.planView,
@@ -3054,13 +3065,6 @@ function App() {
       </main>
 
       <BottomNav activeTab={state.activeTab} onTabChange={handleTabChange} />
-
-      <InstallButton
-        activeTab={state.activeTab}
-        canInstall={state.canInstall}
-        isStandalone={state.isStandalone}
-        onInstall={handleInstallApp}
-      />
 
       <input
         ref={importFileInputRef}
@@ -3199,24 +3203,6 @@ function BottomNav({ activeTab, onTabChange }) {
   );
 }
 
-function InstallButton({ activeTab, canInstall, isStandalone, onInstall }) {
-  if (activeTab !== "home" || isStandalone) {
-    return null;
-  }
-
-  return (
-    <button
-      className={`install-app-button${canInstall ? " is-ready" : ""}`}
-      type="button"
-      aria-label="Установить приложение"
-      title="Установить приложение"
-      onClick={onInstall}
-    >
-      <SvgIcon name="install" />
-    </button>
-  );
-}
-
 function Notice({ notices }) {
   const shouldReduceMotion = useReducedMotion();
   const visibleNotices = Array.isArray(notices) ? notices : [];
@@ -3261,6 +3247,7 @@ function HomeView({
   onActiveNextExercise,
   onFinishActiveWorkout,
   onOpenExerciseTechnique,
+  onOpenSettings,
   onOpenFreeWorkoutPreparation,
   onOpenWorkoutPreparation,
   onOpenTemplateSelector,
@@ -3272,7 +3259,25 @@ function HomeView({
   onStartFreeWorkout,
   onContinueWorkout,
   onOpenFullWorkout,
+  onExportData,
+  onImportData,
+  onClearWorkouts,
+  isStandalone,
+  onInstall,
 }) {
+  if (homeView.name === "settings") {
+    return (
+      <SettingsScreen
+        isStandalone={isStandalone}
+        onBack={onBack}
+        onClearWorkouts={onClearWorkouts}
+        onExportData={onExportData}
+        onImportData={onImportData}
+        onInstall={onInstall}
+      />
+    );
+  }
+
   if (homeView.name === "activeWorkout") {
     const session =
       activeWorkoutSession?.id === homeView.sessionId
@@ -3337,7 +3342,18 @@ function HomeView({
   return (
     <section className="screen home-screen">
       <header className="screen-header">
-        <h1>Главная</h1>
+        <div className="home-overview-title-row">
+          <h1>Главная</h1>
+          <button
+            className="home-settings-button"
+            type="button"
+            aria-label="Настройки"
+            title="Настройки"
+            onClick={onOpenSettings}
+          >
+            <SvgIcon name="settings" />
+          </button>
+        </div>
       </header>
 
       <div
@@ -3364,6 +3380,60 @@ function HomeView({
           onOpen={onOpenFreeWorkoutPreparation}
         />
       </div>
+    </section>
+  );
+}
+
+function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall }) {
+  return (
+    <section className="screen plan-screen settings-screen">
+      <header className="screen-header">
+        <ScreenTitle onBack={onBack}>Настройки</ScreenTitle>
+      </header>
+
+      <section className="panel plan-section data-section">
+        <div className="section-title">
+          <span>Данные</span>
+        </div>
+        <div className="action-grid">
+          <button className="action-button" type="button" onClick={onExportData}>
+            <SvgIcon name="download" />
+            <span>Экспорт данных</span>
+          </button>
+          <button className="action-button" type="button" onClick={onImportData}>
+            <SvgIcon name="upload" />
+            <span>Импорт данных</span>
+          </button>
+          <button className="action-button danger-action" type="button" onClick={onClearWorkouts}>
+            <SvgIcon name="trash" />
+            <span>Очистить тренировки</span>
+          </button>
+        </div>
+      </section>
+
+      <section className="panel plan-section about-app-section">
+        <div className="section-title">
+          <span>О приложении</span>
+        </div>
+        <div className="plan-row about-app-version-row">
+          <strong>Версия приложения</strong>
+          <span>1.0</span>
+        </div>
+        <a
+          className="action-button settings-contact-button"
+          href="https://t.me/x_benimaru_x"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>Связаться с разработчиком</span>
+        </a>
+      </section>
+
+      {!isStandalone ? (
+        <button className="action-button" type="button" onClick={onInstall}>
+          <span>Установить приложение</span>
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -4231,9 +4301,6 @@ function PlanView({
   onExerciseMediaUrlChange,
   onSaveExercise,
   onDeleteExercise,
-  onExportData,
-  onImportData,
-  onClearWorkouts,
 }) {
   if (planView.name === "createTrainingDay" || planView.name === "editTrainingDay") {
     return (
@@ -4315,9 +4382,6 @@ function PlanView({
       onOpenTrainingDayEdit={onOpenTrainingDayEdit}
       onOpenTemplateGroup={onOpenTemplateGroup}
       onOpenExerciseGroup={onOpenExerciseGroup}
-      onExportData={onExportData}
-      onImportData={onImportData}
-      onClearWorkouts={onClearWorkouts}
     />
   );
 }
@@ -4329,9 +4393,6 @@ function PlanOverview({
   onOpenTrainingDayEdit,
   onOpenTemplateGroup,
   onOpenExerciseGroup,
-  onExportData,
-  onImportData,
-  onClearWorkouts,
 }) {
   const templateSummaries = buildTemplateSummariesByMuscleGroup(data);
   const exerciseSummaries = buildExerciseSummariesByMuscleGroup(data);
@@ -4414,25 +4475,6 @@ function PlanOverview({
         </div>
       </section>
 
-      <section className="panel plan-section data-section">
-        <div className="section-title">
-          <span>Данные</span>
-        </div>
-        <div className="action-grid">
-          <button className="action-button" type="button" onClick={onExportData}>
-            <SvgIcon name="download" />
-            <span>Экспорт данных</span>
-          </button>
-          <button className="action-button" type="button" onClick={onImportData}>
-            <SvgIcon name="upload" />
-            <span>Импорт данных</span>
-          </button>
-          <button className="action-button danger-action" type="button" onClick={onClearWorkouts}>
-            <SvgIcon name="trash" />
-            <span>Очистить тренировки</span>
-          </button>
-        </div>
-      </section>
     </section>
   );
 }
