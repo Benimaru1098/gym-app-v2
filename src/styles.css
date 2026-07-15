@@ -1752,7 +1752,7 @@ h2 {
   display: grid;
   align-content: start;
   gap: 8px;
-  height: clamp(178px, 28vh, 236px);
+  height: 224px;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
