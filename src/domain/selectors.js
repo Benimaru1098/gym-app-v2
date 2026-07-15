@@ -614,19 +614,15 @@ function getSelectedTemplateForMuscleGroup(data, workoutGroup, muscleGroupId) {
       template.muscleGroupId === muscleGroupId &&
       !template.isArchived,
   );
-  const defaultTemplate = data.exerciseTemplates.find(
-    (template) => template.muscleGroupId === muscleGroupId && template.isDefault && !template.isArchived,
-  );
-  const overrideValue = workoutGroup.selectedTemplateOverrideByMuscleGroupId?.[muscleGroupId];
-  const hasManualSelection = overrideValue === true;
-
-  if (selectedTemplate && hasManualSelection) {
-    return selectedTemplate;
-  }
 
   return (
-    defaultTemplate ??
     selectedTemplate ??
+    data.exerciseTemplates.find(
+      (template) =>
+        template.muscleGroupId === muscleGroupId &&
+        isProtectedTemplate(template) &&
+        !template.isArchived,
+    ) ??
     data.exerciseTemplates.find(
       (template) => template.muscleGroupId === muscleGroupId && !template.isArchived,
     ) ??
@@ -880,7 +876,6 @@ export function buildWorkoutPreparationData(data, workoutGroupId) {
         .map((item) => ({
           id: item.id,
           name: item.name,
-          isDefault: Boolean(item.isDefault),
           isSelected: Boolean(template && item.id === template.id),
         }));
 
@@ -1004,12 +999,6 @@ function getTemplateExerciseChoiceOrder(data, muscleGroupId, template = null) {
   const seenExerciseIds = new Set();
 
   pushUniqueExerciseIds(orderedExerciseIds, seenExerciseIds, template?.exerciseIds);
-
-  const defaultTemplate = data.exerciseTemplates.find(
-    (item) => item.muscleGroupId === muscleGroupId && item.isDefault && !item.isArchived,
-  );
-
-  pushUniqueExerciseIds(orderedExerciseIds, seenExerciseIds, defaultTemplate?.exerciseIds);
 
   const standardTemplate = data.exerciseTemplates.find(
     (item) => item.muscleGroupId === muscleGroupId && isProtectedTemplate(item) && !item.isArchived,

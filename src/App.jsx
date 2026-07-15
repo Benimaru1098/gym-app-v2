@@ -189,7 +189,7 @@ function createInitialState() {
     journalView: { name: "overview", workoutLogId: null },
     notices: [],
     planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
-    templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
+    templateDraft: { name: "", selectedExerciseIds: [] },
     templateSelector: null,
     trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
   };
@@ -916,10 +916,8 @@ function getTrainingDayCombinationKey(muscleGroupIds) {
 
 function buildWorkoutGroupTemplateSelections(data, workoutGroup, muscleGroupIds) {
   const selectedTemplateByMuscleGroupId = {};
-  const selectedTemplateOverrideByMuscleGroupId = {};
   const templateSource = workoutGroup ?? {
     selectedTemplateByMuscleGroupId: {},
-    selectedTemplateOverrideByMuscleGroupId: {},
   };
 
   muscleGroupIds.forEach((muscleGroupId) => {
@@ -928,17 +926,9 @@ function buildWorkoutGroupTemplateSelections(data, workoutGroup, muscleGroupIds)
     if (templateId) {
       selectedTemplateByMuscleGroupId[muscleGroupId] = templateId;
     }
-
-    selectedTemplateOverrideByMuscleGroupId[muscleGroupId] = Boolean(
-      workoutGroup?.selectedTemplateOverrideByMuscleGroupId?.[muscleGroupId] &&
-      workoutGroup.selectedTemplateByMuscleGroupId?.[muscleGroupId] === templateId,
-    );
   });
 
-  return {
-    selectedTemplateByMuscleGroupId,
-    selectedTemplateOverrideByMuscleGroupId,
-  };
+  return { selectedTemplateByMuscleGroupId };
 }
 
 function getViewElement() {
@@ -1887,17 +1877,12 @@ function App() {
 
   const openTemplateCreate = useCallback(
     (muscleGroupId) => {
-      const data = stateRef.current.data;
-      const hasDefaultTemplate = data.exerciseTemplates.some(
-        (template) => template.muscleGroupId === muscleGroupId && template.isDefault && !template.isArchived,
-      );
       navigate({
         activeTab: "plan",
         planView: { name: "createTemplate", muscleGroupId },
         templateDraft: {
           name: "",
           selectedExerciseIds: [],
-          isDefault: !hasDefaultTemplate,
         },
       });
     },
@@ -1913,7 +1898,6 @@ function App() {
         templateDraft: {
           name: details.template?.name || "",
           selectedExerciseIds: [...(details.template?.exerciseIds || [])],
-          isDefault: Boolean(details.template?.isDefault),
         },
       });
     },
@@ -2477,13 +2461,6 @@ function App() {
     }));
   }, [patchState]);
 
-  const handleTemplateDefaultChange = useCallback((event) => {
-    const checked = event.target.checked;
-    patchState((current) => ({
-      templateDraft: { ...current.templateDraft, isDefault: checked },
-    }));
-  }, [patchState]);
-
   const addDraftExercise = useCallback((exerciseId) => {
     patchState((current) => {
       if (current.templateDraft.selectedExerciseIds.includes(exerciseId)) {
@@ -2634,7 +2611,6 @@ function App() {
         muscleGroupId: details.template?.muscleGroupId || planView.muscleGroupId,
         name,
         exerciseIds: [...templateDraft.selectedExerciseIds],
-        isDefault: Boolean(templateDraft.isDefault),
         isArchived: Boolean(details.template?.isArchived),
         isSystem: Boolean(details.template?.isSystem || name === STANDARD_TEMPLATE_NAME),
         usageCount: Number(details.template?.usageCount || 0),
@@ -2821,7 +2797,7 @@ function App() {
             journalView: { name: "overview", workoutLogId: null },
             notices: [],
             planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
-            templateDraft: { name: "", selectedExerciseIds: [], isDefault: false },
+            templateDraft: { name: "", selectedExerciseIds: [] },
             templateSelector: null,
             trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
           },
@@ -2961,7 +2937,6 @@ function App() {
             onOpenExerciseEdit={openExerciseEdit}
             onOpenExerciseTechnique={openExerciseTechnique}
             onTemplateNameChange={handleTemplateNameChange}
-            onTemplateDefaultChange={handleTemplateDefaultChange}
             onAddDraftExercise={addDraftExercise}
             onRemoveDraftExercise={removeDraftExercise}
             onTemplateDragStart={handleTemplateDragStart}
@@ -3031,7 +3006,6 @@ function App() {
     handleSaveExercise,
     handleSaveTemplate,
     handleSaveTrainingDay,
-    handleTemplateDefaultChange,
     handleTemplateDragStart,
     handleTemplateNameChange,
     handleStartFreeWorkout,
@@ -4248,7 +4222,6 @@ function PlanView({
   onOpenExerciseEdit,
   onOpenExerciseTechnique,
   onTemplateNameChange,
-  onTemplateDefaultChange,
   onAddDraftExercise,
   onRemoveDraftExercise,
   onTemplateDragStart,
@@ -4296,7 +4269,6 @@ function PlanView({
         draft={templateDraft}
         onBack={onBack}
         onNameChange={onTemplateNameChange}
-        onDefaultChange={onTemplateDefaultChange}
         onAddExercise={onAddDraftExercise}
         onRemoveExercise={onRemoveDraftExercise}
         onDragStart={onTemplateDragStart}
@@ -4599,7 +4571,6 @@ function TemplateFormScreen({
   draft,
   onBack,
   onNameChange,
-  onDefaultChange,
   onAddExercise,
   onRemoveExercise,
   onDragStart,
@@ -4634,21 +4605,6 @@ function TemplateFormScreen({
             aria-readonly={protectedTemplate}
           />
         </label>
-
-        <div className="template-choice-list">
-          <label className="plan-row template-choice-row default-template-row">
-            <input
-              className="template-choice-input"
-              type="checkbox"
-              name="isDefault"
-              value="true"
-              checked={draft.isDefault}
-              onChange={onDefaultChange}
-            />
-            <span className="template-choice-box" aria-hidden="true" />
-            <span className="template-choice-name">По умолчанию</span>
-          </label>
-        </div>
 
         <TemplateExerciseBuilder
           details={details}

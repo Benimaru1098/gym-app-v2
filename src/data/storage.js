@@ -6,7 +6,7 @@ import {
 import { SCHEMA_VERSION, createInitialData, initialData } from "./seed.js";
 
 const DB_NAME = "gym-cycle-db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const STORE_NAMES = [
   "metadata",
@@ -17,8 +17,6 @@ const STORE_NAMES = [
   "workoutLogs",
   "activeWorkoutSessions",
 ];
-
-const LEGACY_STORE_NAMES = ["workoutCycles"];
 
 const EXPORT_APP_ID = "gym-app";
 const EXPORT_FORMAT = "gym-app-data-export";
@@ -54,21 +52,12 @@ function createStores(database) {
   }
 }
 
-function removeLegacyStores(database) {
-  for (const storeName of LEGACY_STORE_NAMES) {
-    if (database.objectStoreNames.contains(storeName)) {
-      database.deleteObjectStore(storeName);
-    }
-  }
-}
-
 export function openAppDatabase() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = () => {
       createStores(request.result);
-      removeLegacyStores(request.result);
     };
 
     request.onsuccess = () => resolve(request.result);
@@ -95,12 +84,15 @@ async function readMetadata(database) {
 }
 
 function normalizeExerciseTemplate(template) {
-  const isProtected = isProtectedTemplate(template);
+  const normalizedTemplate = { ...template };
+
+  delete normalizedTemplate.isDefault;
+
+  const isProtected = isProtectedTemplate(normalizedTemplate);
 
   return {
-    ...template,
+    ...normalizedTemplate,
     name: isProtected ? STANDARD_TEMPLATE_NAME : template.name,
-    isDefault: Boolean(template.isDefault),
     isArchived: isProtected ? false : Boolean(template.isArchived),
     isSystem: isProtected ? true : Boolean(template.isSystem),
     usageCount: Number(template.usageCount ?? 0),
@@ -117,44 +109,15 @@ function normalizeExercise(exercise) {
 }
 
 function normalizeWorkoutGroup(workoutGroup) {
+  const normalizedWorkoutGroup = { ...workoutGroup };
+
+  delete normalizedWorkoutGroup.selectedTemplateOverrideByMuscleGroupId;
+
   return {
-    ...workoutGroup,
+    ...normalizedWorkoutGroup,
     muscleGroupIds: [...(workoutGroup.muscleGroupIds ?? [])],
     selectedTemplateByMuscleGroupId: { ...(workoutGroup.selectedTemplateByMuscleGroupId ?? {}) },
-    selectedTemplateOverrideByMuscleGroupId: {
-      ...(workoutGroup.selectedTemplateOverrideByMuscleGroupId ?? {}),
-    },
     orderIndex: Number(workoutGroup.orderIndex ?? 0),
-  };
-}
-
-function getNormalizedTemplatesForMuscleGroup(templates, muscleGroupId, preferredDefaultId = null) {
-  const normalizedTemplates = templates.map(normalizeExerciseTemplate);
-  const muscleTemplates = normalizedTemplates.filter(
-    (template) => template.muscleGroupId === muscleGroupId,
-  );
-  const activeTemplates = muscleTemplates.filter((template) => !template.isArchived);
-  const standardTemplateId = getStandardTemplateId(muscleGroupId);
-  const preferredDefaultTemplate = preferredDefaultId
-    ? activeTemplates.find((template) => template.id === preferredDefaultId)
-    : null;
-  const currentDefaultTemplate = activeTemplates.find((template) => template.isDefault);
-  const standardTemplate = activeTemplates.find((template) => template.id === standardTemplateId);
-  const fallbackTemplate = preferredDefaultTemplate ?? currentDefaultTemplate ?? standardTemplate ?? activeTemplates[0];
-  const defaultTemplateId = fallbackTemplate?.id ?? null;
-
-  return {
-    defaultTemplateId,
-    templates: normalizedTemplates.map((template) => {
-      if (template.muscleGroupId !== muscleGroupId) {
-        return template;
-      }
-
-      return {
-        ...template,
-        isDefault: Boolean(defaultTemplateId && template.id === defaultTemplateId),
-      };
-    }),
   };
 }
 
@@ -186,12 +149,10 @@ async function ensureSystemTemplates(database) {
   const templates = await readStore(database, "exerciseTemplates");
   const metadata = await readMetadata(database);
   const templatesById = new Map(templates.map((template) => [template.id, template]));
-  const muscleGroupIds = new Set();
 
   for (const standardTemplate of getInitialStandardTemplates()) {
     const existingTemplate = templatesById.get(standardTemplate.id);
 
-    muscleGroupIds.add(standardTemplate.muscleGroupId);
     templatesById.set(
       standardTemplate.id,
       normalizeExerciseTemplate({
@@ -205,14 +166,7 @@ async function ensureSystemTemplates(database) {
     );
   }
 
-  let normalizedTemplates = [...templatesById.values()];
-
-  for (const muscleGroupId of muscleGroupIds) {
-    normalizedTemplates = getNormalizedTemplatesForMuscleGroup(
-      normalizedTemplates,
-      muscleGroupId,
-    ).templates;
-  }
+  const normalizedTemplates = [...templatesById.values()].map(normalizeExerciseTemplate);
 
   const existingTemplatesById = new Map(templates.map((template) => [template.id, template]));
   const hasChanges =
@@ -320,7 +274,7 @@ export async function loadAppData() {
       metadata: metadataItems.find((item) => item.id === "app") ?? null,
       muscleGroups,
       exercises: exercises.map(normalizeExercise),
-      exerciseTemplates,
+      exerciseTemplates: exerciseTemplates.map(normalizeExerciseTemplate),
       workoutGroups: workoutGroups.map(normalizeWorkoutGroup),
       workoutLogs,
       activeWorkoutSessions,
@@ -408,13 +362,6 @@ function normalizeImportedData(payload) {
   normalizedData.exercises = normalizedData.exercises.map(normalizeExercise);
   normalizedData.exerciseTemplates = normalizedData.exerciseTemplates.map(normalizeExerciseTemplate);
   normalizedData.workoutGroups = normalizedData.workoutGroups.map(normalizeWorkoutGroup);
-
-  for (const muscleGroup of normalizedData.muscleGroups) {
-    normalizedData.exerciseTemplates = getNormalizedTemplatesForMuscleGroup(
-      normalizedData.exerciseTemplates,
-      muscleGroup.id,
-    ).templates;
-  }
 
   return {
     metadata:
@@ -566,81 +513,11 @@ export async function saveExerciseTemplate(template) {
 
   try {
     const metadata = await readMetadata(database);
-    const templates = await readStore(database, "exerciseTemplates");
-    const workoutGroups = await readStore(database, "workoutGroups");
     const normalizedTemplate = normalizeExerciseTemplate(template);
-    const templatesAfterSave = templates.some((item) => item.id === normalizedTemplate.id)
-      ? templates.map((item) => (item.id === normalizedTemplate.id ? normalizedTemplate : item))
-      : [...templates, normalizedTemplate];
-    const preferredDefaultId = normalizedTemplate.isDefault ? normalizedTemplate.id : null;
-    const normalizedResult = getNormalizedTemplatesForMuscleGroup(
-      templatesAfterSave,
-      normalizedTemplate.muscleGroupId,
-      preferredDefaultId,
-    );
-    const defaultTemplateId = normalizedResult.defaultTemplateId;
-    const shouldForceDefaultSelection =
-      normalizedTemplate.isDefault && defaultTemplateId === normalizedTemplate.id;
-    const normalizedTemplatesById = new Map(
-      normalizedResult.templates.map((item) => [item.id, item]),
-    );
-    const transaction = database.transaction(
-      ["metadata", "exerciseTemplates", "workoutGroups"],
-      "readwrite",
-    );
+    const transaction = database.transaction(["metadata", "exerciseTemplates"], "readwrite");
     const done = transactionDone(transaction);
-    const templateStore = transaction.objectStore("exerciseTemplates");
-    const workoutGroupStore = transaction.objectStore("workoutGroups");
 
-    for (const nextTemplate of normalizedResult.templates) {
-      if (nextTemplate.muscleGroupId === normalizedTemplate.muscleGroupId) {
-        templateStore.put(nextTemplate);
-      }
-    }
-
-    if (defaultTemplateId) {
-      for (const workoutGroup of workoutGroups) {
-        if (!workoutGroup.muscleGroupIds?.includes(normalizedTemplate.muscleGroupId)) {
-          continue;
-        }
-
-        const selectedTemplateId =
-          workoutGroup.selectedTemplateByMuscleGroupId?.[normalizedTemplate.muscleGroupId];
-        const overrideValue =
-          workoutGroup.selectedTemplateOverrideByMuscleGroupId?.[normalizedTemplate.muscleGroupId];
-        const selectedTemplate = normalizedTemplatesById.get(selectedTemplateId);
-        const hasLegacyManualSelection =
-          overrideValue === undefined &&
-          selectedTemplate &&
-          !selectedTemplate.isDefault &&
-          !isProtectedTemplate(selectedTemplate);
-        const hasManualSelection = overrideValue === true || hasLegacyManualSelection;
-
-        if (
-          shouldForceDefaultSelection &&
-          selectedTemplateId === defaultTemplateId &&
-          overrideValue === false
-        ) {
-          continue;
-        }
-
-        if (!shouldForceDefaultSelection && (hasManualSelection || selectedTemplateId === defaultTemplateId)) {
-          continue;
-        }
-
-        workoutGroupStore.put({
-          ...workoutGroup,
-          selectedTemplateByMuscleGroupId: {
-            ...workoutGroup.selectedTemplateByMuscleGroupId,
-            [normalizedTemplate.muscleGroupId]: defaultTemplateId,
-          },
-          selectedTemplateOverrideByMuscleGroupId: {
-            ...workoutGroup.selectedTemplateOverrideByMuscleGroupId,
-            [normalizedTemplate.muscleGroupId]: false,
-          },
-        });
-      }
-    }
+    transaction.objectStore("exerciseTemplates").put(normalizedTemplate);
 
     transaction.objectStore("metadata").put({
       id: "app",
@@ -704,17 +581,13 @@ export async function saveWorkoutGroupSelectedTemplate(workoutGroupId, muscleGro
     const transaction = database.transaction(["metadata", "workoutGroups"], "readwrite");
     const done = transactionDone(transaction);
 
-    transaction.objectStore("workoutGroups").put({
+    transaction.objectStore("workoutGroups").put(normalizeWorkoutGroup({
       ...workoutGroup,
       selectedTemplateByMuscleGroupId: {
         ...workoutGroup.selectedTemplateByMuscleGroupId,
         [muscleGroupId]: template.id,
       },
-      selectedTemplateOverrideByMuscleGroupId: {
-        ...workoutGroup.selectedTemplateOverrideByMuscleGroupId,
-        [muscleGroupId]: !template.isDefault,
-      },
-    });
+    }));
     transaction.objectStore("metadata").put({
       id: "app",
       schemaVersion: SCHEMA_VERSION,
@@ -826,19 +699,19 @@ export async function deleteExerciseTemplate(templateId) {
           item.id === template.id
             ? normalizeExerciseTemplate({
                 ...item,
-                isDefault: false,
                 isArchived: true,
                 archivedAt: new Date().toISOString(),
               })
             : item,
         )
       : templates.filter((item) => item.id !== template.id);
-    const normalizedResult = getNormalizedTemplatesForMuscleGroup(
-      templatesAfterDelete,
-      template.muscleGroupId,
+    const activeTemplates = templatesAfterDelete.filter(
+      (item) => item.muscleGroupId === template.muscleGroupId && !item.isArchived,
     );
     const fallbackTemplateId =
-      normalizedResult.defaultTemplateId ?? getStandardTemplateId(template.muscleGroupId);
+      activeTemplates.find((item) => item.id === getStandardTemplateId(template.muscleGroupId))?.id ??
+      activeTemplates[0]?.id ??
+      null;
     const transaction = database.transaction(
       ["metadata", "exerciseTemplates", "workoutGroups"],
       "readwrite",
@@ -855,29 +728,19 @@ export async function deleteExerciseTemplate(templateId) {
       templateStore.delete(template.id);
     }
 
-    for (const nextTemplate of normalizedResult.templates) {
-      if (nextTemplate.muscleGroupId === template.muscleGroupId && nextTemplate.id !== template.id) {
-        templateStore.put(nextTemplate);
-      }
-    }
-
     if (fallbackTemplateId) {
       for (const workoutGroup of workoutGroups) {
         if (workoutGroup.selectedTemplateByMuscleGroupId?.[template.muscleGroupId] !== template.id) {
           continue;
         }
 
-        workoutGroupStore.put({
+        workoutGroupStore.put(normalizeWorkoutGroup({
           ...workoutGroup,
           selectedTemplateByMuscleGroupId: {
             ...workoutGroup.selectedTemplateByMuscleGroupId,
             [template.muscleGroupId]: fallbackTemplateId,
           },
-          selectedTemplateOverrideByMuscleGroupId: {
-            ...workoutGroup.selectedTemplateOverrideByMuscleGroupId,
-            [template.muscleGroupId]: false,
-          },
-        });
+        }));
       }
     }
 

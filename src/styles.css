@@ -1699,11 +1699,6 @@ h2 {
   list-style: none;
 }
 
-.template-choice-list {
-  display: grid;
-  gap: 8px;
-}
-
 .template-builder-section {
   gap: 10px;
 }
@@ -1969,55 +1964,6 @@ h2 {
 
 .template-base-exercise-button.is-selected:active {
   background: var(--accent);
-}
-
-.template-choice-row {
-  position: relative;
-  min-height: 50px;
-}
-
-.template-choice-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.template-choice-box {
-  position: relative;
-  display: grid;
-  place-items: center;
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  transition:
-    border-color 160ms ease,
-    background-color 160ms ease;
-}
-
-.template-choice-box::after {
-  position: absolute;
-  width: 8px;
-  height: 4px;
-  border-bottom: 2px solid var(--text);
-  border-left: 2px solid var(--text);
-  content: "";
-  opacity: 0;
-  transform: rotate(-45deg) translateY(-1px);
-  transition: opacity 160ms ease;
-}
-
-.template-choice-input:checked + .template-choice-box {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.template-choice-input:checked + .template-choice-box::after {
-  opacity: 1;
 }
 
 .template-choice-name {
