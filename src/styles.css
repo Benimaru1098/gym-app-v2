@@ -1692,8 +1692,18 @@ h2 {
 .form-input-with-notice .context-notice {
   position: absolute;
   top: 50%;
-  right: 12px;
+  right: 0;
   transform: translateY(-50%);
+  height: 100%;
+}
+.form-input-with-notice .context-notice .context-notice-button {
+  width: 40px;
+  height: 100%;
+}
+
+.form-input-with-notice .context-notice .context-notice-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .form-input-with-notice .context-notice.is-open {
@@ -1701,7 +1711,7 @@ h2 {
 }
 
 .form-input-with-notice .context-notice-popover {
-  top: calc(100% + 22px);
+  top: calc(100% + 5px);
   right: 0;
   left: auto;
 }
