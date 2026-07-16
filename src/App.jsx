@@ -1038,6 +1038,45 @@ function SvgIcon({ name }) {
   return <span className="icon-wrap" dangerouslySetInnerHTML={{ __html: icon(name) }} />;
 }
 
+function InfoNotice({ children, label = "Показать описание" }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const noticeRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (!noticeRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isOpen]);
+
+  return (
+    <div className={`context-notice${isOpen ? " is-open" : ""}`} ref={noticeRef}>
+      <button
+        className="context-notice-button"
+        type="button"
+        aria-label={label}
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <SvgIcon name="notice" />
+      </button>
+      {isOpen ? (
+        <div className="context-notice-popover" role="note">
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ClickIndicator() {
   return (
     <svg className="click-indicator" viewBox="0 0 26 22" width="26" height="22" aria-hidden="true" focusable="false">
@@ -3392,8 +3431,23 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
       </header>
 
       <section className="panel plan-section data-section">
-        <div className="section-title">
+        <div className="section-title section-title-with-info">
           <span>Данные</span>
+          <InfoNotice label="Описание работы с данными">
+            <p>
+              <strong>Экспорт данных</strong> сохраняет ваши упражнения, шаблоны, тренировочные дни и
+              журнал в файл. Его можно использовать как резервную копию или перенести на другое
+              устройство. Незавершённая тренировка не сохраняется.
+            </p>
+            <p>
+              <strong>Импорт данных</strong> загружает ранее сохранённые данные из файла и заменяет ими
+              текущие данные приложения. Незавершённая тренировка будет удалена.
+            </p>
+            <p>
+              <strong>Очистить тренировки</strong> удаляет всю историю тренировок в журнале.
+              Упражнения, шаблоны, тренировочные дни и незавершённая тренировка останутся.
+            </p>
+          </InfoNotice>
         </div>
         <div className="action-grid">
           <button className="action-button" type="button" onClick={onExportData}>
@@ -3425,7 +3479,10 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
           target="_blank"
           rel="noopener noreferrer"
         >
-          <span>Связаться с разработчиком</span>
+          <span>Написать в Telegram</span>
+        </a>
+        <a className="action-button settings-contact-button" href="mailto:aidik1098@gmail.com">
+          <span>Написать на почту</span>
         </a>
       </section>
 
@@ -4404,8 +4461,14 @@ function PlanOverview({
       </header>
 
       <section className="panel plan-section">
-        <div className="section-title">
+        <div className="section-title section-title-with-info">
           <span>Тренировочные дни</span>
+          <InfoNotice label="Описание тренировочных дней">
+            <p>
+              Здесь настраиваются тренировки, которые отображаются на главной.
+            </p>
+            <p>Для каждой тренировки можно выбрать до двух групп мышц.</p>
+          </InfoNotice>
         </div>
         <div className="plan-list">
           {trainingDays.length ? (
@@ -4430,8 +4493,14 @@ function PlanOverview({
       </section>
 
       <section className="panel plan-section">
-        <div className="section-title">
+        <div className="section-title section-title-with-info">
           <span>Шаблоны упражнений</span>
+          <InfoNotice label="Описание шаблонов упражнений">
+            <p>
+              Шаблон — это готовый набор упражнений для определённой группы мышц. Можно создать несколько
+              шаблонов и выбирать подходящий перед началом тренировки.
+            </p>
+          </InfoNotice>
         </div>
         <div className="plan-summary-grid">
           {templateSummaries.map((summary) => (
@@ -4454,8 +4523,15 @@ function PlanOverview({
       </section>
 
       <section className="panel plan-section">
-        <div className="section-title">
+        <div className="section-title section-title-with-info">
           <span>База упражнений</span>
+          <InfoNotice label="Описание базы упражнений">
+            <p>
+              Здесь хранится список доступных упражнений для каждой группы мышц. Упражнения можно
+              добавлять, изменять и удалять, а также добавлять к ним анимацию техники выполнения.
+            </p>
+            <p>Упражнения из базы используются в шаблонах, «Своём плане» и при замене упражнения.</p>
+          </InfoNotice>
         </div>
         <div className="plan-summary-grid">
           {exerciseSummaries.map((summary) => (
@@ -4973,40 +5049,56 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>{isEdit ? "Редактировать упражнение" : `Новая запись: ${details.muscleGroup?.name || "Мышца"}`}</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{isEdit ? "Редактировать упр" : `Новое упражнение`}</ScreenTitle>
       </header>
 
       <form className="template-form" onSubmit={onSave}>
-        <label className="form-field">
-          <input
-            className="form-input"
-            type="text"
-            name="exerciseName"
-            value={draft.name}
-            placeholder="Название упражнения"
-            autoComplete="off"
-            onChange={onNameChange}
-          />
-        </label>
+        <div className="form-field">
+          <div className={`form-input-with-notice${isEdit ? " has-notice" : ""}`}>
+            <input
+              className="form-input"
+              type="text"
+              name="exerciseName"
+              value={draft.name}
+              placeholder="Название упражнения"
+              autoComplete="off"
+              onChange={onNameChange}
+            />
+            {isEdit ? (
+              <InfoNotice label="Описание переименования упражнения">
+                <p>
+                  История весов и повторов останется привязана к этому упражнению. Если это другое
+                  движение, создай новое упражнение вместо переименования.
+                </p>
+              </InfoNotice>
+            ) : null}
+          </div>
+        </div>
 
-        {isEdit ? (
-          <p className="form-warning">
-            История весов и повторов останется привязана к этому упражнению. Если это другое движение, создай новое упражнение вместо переименования.
-          </p>
-        ) : null}
-
-        <label className="form-field">
-          <span className="form-label-text">Ссылка на GIF-анимацию</span>
-          <input
-            className="form-input"
-            type="text"
-            name="exerciseMediaUrl"
-            value={draft.mediaUrl || ""}
-            placeholder="https://example.com/exercise.gif"
-            autoComplete="off"
-            onChange={onMediaUrlChange}
-          />
-        </label>
+        <div className="form-field">
+          <div className="form-input-with-notice has-notice">
+            <input
+              className="form-input"
+              type="text"
+              name="exerciseMediaUrl"
+              value={draft.mediaUrl || ""}
+              placeholder="Ссылка на GIF-анимацию"
+              autoComplete="off"
+              onChange={onMediaUrlChange}
+            />
+            <InfoNotice label="Как добавить ссылку на GIF-анимацию">
+              <p>
+                Найди в браузере GIF с техникой упражнения. Нажми и удерживай изображение, затем
+                выбери «Копировать адрес изображения» или открой изображение в новой вкладке и
+                скопируй адрес из строки браузера.
+              </p>
+              <p>
+                Вставь полученную ссылку в это поле. Она должна вести прямо на изображение, а не на
+                страницу сайта, то есть в конце ссылки дожно быть <strong>.gif</strong>.
+              </p>
+            </InfoNotice>
+          </div>
+        </div>
 
         <div className="form-field">
           <span className="form-label-text">Предпросмотр</span>

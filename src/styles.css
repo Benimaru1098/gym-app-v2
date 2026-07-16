@@ -1369,6 +1369,65 @@ h2 {
   font-weight: 600;
 }
 
+.section-title-with-info {
+  position: relative;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.context-notice {
+  display: inline-flex;
+}
+
+.context-notice-button {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.context-notice-button .icon-wrap {
+  color: inherit;
+}
+
+.context-notice-button[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.context-notice-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 4;
+  width: min(380px, calc(100vw - 62px));
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-soft);
+  box-shadow: var(--shadow-soft);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.context-notice-popover p {
+  margin: 0;
+}
+
+.context-notice-popover p + p {
+  margin-top: 10px;
+}
+
+.context-notice-popover strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
 .plan-screen {
   gap: 14px;
 }
@@ -1622,6 +1681,31 @@ h2 {
   color: var(--text);
 }
 
+.form-input-with-notice {
+  position: relative;
+}
+
+.form-input-with-notice.has-notice .form-input {
+  padding-right: 38px;
+}
+
+.form-input-with-notice .context-notice {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+}
+
+.form-input-with-notice .context-notice.is-open {
+  z-index: 5;
+}
+
+.form-input-with-notice .context-notice-popover {
+  top: calc(100% + 22px);
+  right: 0;
+  left: auto;
+}
+
 .form-label-text {
   color: var(--muted);
   font-size: 14px;
@@ -1641,7 +1725,6 @@ h2 {
   line-height: 1.35;
   overflow: hidden;
   text-align: center;
-  position: relative;
 }
 
 .exercise-media-preview .gif-loading {
@@ -1710,17 +1793,6 @@ h2 {
 
 .search-field-input::-webkit-search-cancel-button {
   display: none;
-}
-
-.form-warning {
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text-soft);
-  font-size: 14px;
-  line-height: 1.35;
-  padding: 12px 13px;
 }
 
 .template-exercise-list {
@@ -2189,6 +2261,7 @@ h2 {
 .nav-button:focus-visible,
 .back-icon-button:focus-visible,
 .home-settings-button:focus-visible,
+.context-notice-button:focus-visible,
 .journal-filter-button:focus-visible,
 .journal-filter-reset-button:focus-visible,
 .exercise-card-technique:focus-visible,
