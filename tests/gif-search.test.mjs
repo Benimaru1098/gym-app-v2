@@ -156,3 +156,28 @@ test("stops at a challenge page even when DuckDuckGo responds with HTTP 200", as
   assert.deepEqual(await second.json(), { ...expected, stage: "images" });
   assert.equal(upstream.mock.callCount(), 3);
 });
+
+test("keeps explicit client headers consistent across both token pages and image search", async (t) => {
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    requests.push({ url, options });
+    if (url.pathname === "/") return new Response("<html>No token</html>");
+    if (url.pathname === "/html/") return new Response(`<input name="vqd" value="${token}">`);
+    return Response.json({ results: [] });
+  });
+
+  const response = await gifApi.fetch(validRequest());
+  assert.equal(response.status, 200);
+  assert.equal(requests.length, 3);
+  const clientHeaders = requests[0].options.headers;
+  assert.ok(clientHeaders["User-Agent"]);
+  assert.ok(clientHeaders["Accept-Language"]);
+  for (const { options } of requests) {
+    assert.equal(options.headers["User-Agent"], clientHeaders["User-Agent"]);
+    assert.equal(options.headers["Accept-Language"], clientHeaders["Accept-Language"]);
+    assert.equal(options.signal, requests[0].options.signal);
+  }
+  assert.match(clientHeaders.Accept, /text\/html/);
+  assert.equal(requests[2].options.headers.Accept, "application/json");
+  assert.equal(requests[2].options.headers.Referer, "https://duckduckgo.com/");
+});
