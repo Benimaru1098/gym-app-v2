@@ -24,6 +24,7 @@ import {
   buildActiveWorkoutSessionDraft,
   buildExerciseCreationData,
   buildExerciseEditingData,
+  buildExerciseHistory,
   buildExerciseSummariesByMuscleGroup,
   buildExercisesForMuscleGroup,
   buildFreeWorkoutCard,
@@ -81,6 +82,7 @@ const EXERCISE_TECHNIQUE_LONG_PRESS_MS = 520;
 const EXERCISE_TECHNIQUE_LONG_PRESS_MOVE_LIMIT = 10;
 const NOTICE_DURATION_MS = 2600;
 const MAX_VISIBLE_NOTICES = 3;
+const JOURNAL_PAGE_SIZE = 25;
 const BOTTOM_SHEET_OVERLAYS = {
   activeExerciseReplacement: "activeExerciseReplacement",
   exerciseTechnique: "exerciseTechnique",
@@ -186,6 +188,7 @@ function createInitialState() {
       window.navigator.standalone === true,
     journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     journalView: { name: "overview", workoutLogId: null },
+    journalVisibleCount: JOURNAL_PAGE_SIZE,
     notices: [],
     planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
     templateDraft: { name: "", selectedExerciseIds: [] },
@@ -211,6 +214,17 @@ function normalizeHomeView(view) {
     return { name: "activeWorkout", sessionId: view.sessionId, workoutGroupId: view.workoutGroupId ?? null };
   }
 
+  if (view?.name === "exerciseHistory") {
+    return {
+      name: "exerciseHistory",
+      sessionId: view.sessionId,
+      workoutGroupId: view.workoutGroupId ?? null,
+      exerciseId: view.exerciseId,
+      exerciseName: view.exerciseName,
+      visibleCount: view.visibleCount ?? JOURNAL_PAGE_SIZE,
+    };
+  }
+
   return { name: "overview", workoutGroupId: null };
 }
 
@@ -232,6 +246,13 @@ function normalizePlanView(view) {
       return { name: "createExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null, trainingDayId: null };
     case "editExercise":
       return { name: "editExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: view.exerciseId, trainingDayId: null };
+    case "exerciseHistory":
+      return {
+        name: "exerciseHistory",
+        muscleGroupId: view.muscleGroupId,
+        exerciseId: view.exerciseId,
+        visibleCount: view.visibleCount ?? JOURNAL_PAGE_SIZE,
+      };
     default:
       return { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null };
   }
@@ -355,6 +376,8 @@ function getPlanBackTarget(planView) {
   const normalized = normalizePlanView(planView);
 
   switch (normalized.name) {
+    case "exerciseHistory":
+      return { activeTab: "plan", planView: { ...normalized, name: "editExercise" } };
     case "createTrainingDay":
     case "editTrainingDay":
       return { activeTab: "plan", planView: { name: "overview" } };
@@ -379,6 +402,10 @@ function getPlanBackTarget(planView) {
 }
 
 function getLocalBackTarget(appState) {
+  if (appState.activeTab === "home" && appState.homeView.name === "exerciseHistory") {
+    return { activeTab: "home", homeView: { ...appState.homeView, name: "activeWorkout" } };
+  }
+
   if (appState.activeTab === "home" && appState.homeView.name === "activeWorkout") {
     const session = getActiveWorkoutSessionFromState(appState);
     const workoutGroupId = session?.workoutGroupId ?? appState.homeView.workoutGroupId;
@@ -943,12 +970,16 @@ function getViewScrollKey(appState) {
     case "home": {
       const normalized = normalizeHomeView(appState.homeView);
 
-      return [
+      const parts = [
         "home",
         normalized.name,
         normalized.workoutGroupId || "",
         normalized.sessionId || "",
-      ].join(":");
+      ];
+      if (normalized.name === "exerciseHistory") {
+        parts.push(normalized.exerciseId);
+      }
+      return parts.join(":");
     }
     case "plan": {
       const normalized = normalizePlanView(appState.planView);
@@ -977,6 +1008,13 @@ function getViewScrollKey(appState) {
 }
 
 function getViewDepth(appState) {
+  if (
+    (appState.activeTab === "home" && appState.homeView.name === "exerciseHistory") ||
+    (appState.activeTab === "plan" && appState.planView.name === "exerciseHistory")
+  ) {
+    return 3;
+  }
+
   switch (appState.activeTab) {
     case "home": {
       const normalized = normalizeHomeView(appState.homeView);
@@ -1981,6 +2019,24 @@ function App() {
     [navigate],
   );
 
+  const openExerciseHistory = useCallback((exerciseId, exerciseName) => {
+    const { activeTab, homeView, planView } = stateRef.current;
+
+    if (activeTab === "home" && homeView.name === "activeWorkout") {
+      navigate({ homeView: { ...homeView, name: "exerciseHistory", exerciseId, exerciseName } });
+    } else if (activeTab === "plan" && planView.name === "editExercise") {
+      navigate({ planView: { ...planView, name: "exerciseHistory" } });
+    }
+  }, [navigate]);
+
+  const showMoreExerciseHistory = useCallback(() => {
+    patchState((current) => {
+      const viewKey = current.activeTab === "home" ? "homeView" : "planView";
+      const view = current[viewKey];
+      return { [viewKey]: { ...view, visibleCount: view.visibleCount + JOURNAL_PAGE_SIZE } };
+    });
+  }, [patchState]);
+
   const openTemplateSelector = useCallback((muscleGroupId, workoutGroupId) => {
     patchState({ templateSelector: { muscleGroupId, workoutGroupId } });
     pushBottomSheetHistory(BOTTOM_SHEET_OVERLAYS.templateSelector);
@@ -2449,54 +2505,65 @@ function App() {
     navigate({ activeTab: "journal", journalView: { name: "filter" } });
   }, [navigate]);
 
+  const showMoreJournalEntries = useCallback(() => {
+    patchState((current) => ({
+      journalVisibleCount: current.journalVisibleCount + JOURNAL_PAGE_SIZE,
+    }));
+  }, [patchState]);
+
+  const updateJournalFilter = useCallback((update) => {
+    const overviewKey = getViewScrollKey({ activeTab: "journal", journalView: { name: "overview" } });
+    scrollPositionsRef.current.delete(overviewKey);
+    if (getViewScrollKey(stateRef.current) === overviewKey) {
+      getViewElement()?.scrollTo({ top: 0 });
+    }
+
+    patchState((current) => ({
+      journalFilter: update(current.journalFilter),
+      journalVisibleCount: JOURNAL_PAGE_SIZE,
+    }));
+  }, [patchState]);
+
   const toggleJournalFilterMuscleGroup = useCallback(
     (muscleGroupId, muscleExerciseIds = []) => {
-      patchState((current) => {
-        const selectedMuscleGroupIds = current.journalFilter.selectedMuscleGroupIds ?? [];
+      updateJournalFilter((filter) => {
+        const selectedMuscleGroupIds = filter.selectedMuscleGroupIds ?? [];
         const isSelected = selectedMuscleGroupIds.includes(muscleGroupId);
         const removedExerciseIds = new Set(muscleExerciseIds);
 
         return {
-          journalFilter: {
-            selectedMuscleGroupIds: isSelected
-              ? selectedMuscleGroupIds.filter((id) => id !== muscleGroupId)
-              : [...selectedMuscleGroupIds, muscleGroupId],
-            selectedExerciseIds: isSelected
-              ? (current.journalFilter.selectedExerciseIds ?? []).filter(
-                  (id) => !removedExerciseIds.has(id),
-                )
-              : current.journalFilter.selectedExerciseIds ?? [],
-          },
+          selectedMuscleGroupIds: isSelected
+            ? selectedMuscleGroupIds.filter((id) => id !== muscleGroupId)
+            : [...selectedMuscleGroupIds, muscleGroupId],
+          selectedExerciseIds: isSelected
+            ? (filter.selectedExerciseIds ?? []).filter((id) => !removedExerciseIds.has(id))
+            : filter.selectedExerciseIds ?? [],
         };
       });
     },
-    [patchState],
+    [updateJournalFilter],
   );
 
   const toggleJournalFilterExercise = useCallback(
     (exerciseId) => {
-      patchState((current) => {
-        const selectedExerciseIds = current.journalFilter.selectedExerciseIds ?? [];
+      updateJournalFilter((filter) => {
+        const selectedExerciseIds = filter.selectedExerciseIds ?? [];
         const isSelected = selectedExerciseIds.includes(exerciseId);
 
         return {
-          journalFilter: {
-            ...current.journalFilter,
-            selectedExerciseIds: isSelected
-              ? selectedExerciseIds.filter((id) => id !== exerciseId)
-              : [...selectedExerciseIds, exerciseId],
-          },
+          ...filter,
+          selectedExerciseIds: isSelected
+            ? selectedExerciseIds.filter((id) => id !== exerciseId)
+            : [...selectedExerciseIds, exerciseId],
         };
       });
     },
-    [patchState],
+    [updateJournalFilter],
   );
 
   const clearJournalFilter = useCallback(() => {
-    patchState({
-      journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
-    });
-  }, [patchState]);
+    updateJournalFilter(() => ({ selectedMuscleGroupIds: [], selectedExerciseIds: [] }));
+  }, [updateJournalFilter]);
 
   const handleTemplateNameChange = useCallback((event) => {
     const value = event.target.value;
@@ -2839,6 +2906,7 @@ function App() {
             isLoading: false,
             journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
             journalView: { name: "overview", workoutLogId: null },
+            journalVisibleCount: JOURNAL_PAGE_SIZE,
             notices: [],
             planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
             templateDraft: { name: "", selectedExerciseIds: [] },
@@ -2928,8 +2996,23 @@ function App() {
       screenContent = <ErrorScreen message="Данные не найдены" />;
     } else {
       screenKey = getViewScrollKey(state);
+      const currentView =
+        state.activeTab === "home" ? state.homeView
+        : state.activeTab === "plan" ? state.planView
+        : null;
 
-      if (state.activeTab === "home") {
+      if (currentView?.name === "exerciseHistory") {
+        screenContent = (
+          <ExerciseHistoryScreen
+            data={state.data}
+            exerciseId={currentView.exerciseId}
+            exerciseName={currentView.exerciseName}
+            visibleCount={currentView.visibleCount}
+            onBack={goBack}
+            onShowMore={showMoreExerciseHistory}
+          />
+        );
+      } else if (state.activeTab === "home") {
         screenContent = (
           <HomeView
             data={state.data}
@@ -2944,6 +3027,7 @@ function App() {
             onActivePreviousExercise={handleActivePreviousExercise}
             onActiveNextExercise={handleActiveNextExercise}
             onFinishActiveWorkout={handleFinishActiveWorkout}
+            onOpenExerciseHistory={openExerciseHistory}
             onOpenExerciseTechnique={openExerciseTechnique}
             onOpenSettings={openSettings}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
@@ -2985,6 +3069,7 @@ function App() {
             onOpenExerciseGroup={openExerciseGroup}
             onOpenExerciseCreate={openExerciseCreate}
             onOpenExerciseEdit={openExerciseEdit}
+            onOpenExerciseHistory={openExerciseHistory}
             onOpenExerciseTechnique={openExerciseTechnique}
             onTemplateNameChange={handleTemplateNameChange}
             onAddDraftExercise={addDraftExercise}
@@ -2998,17 +3083,27 @@ function App() {
             onDeleteExercise={handleDeleteExercise}
           />
         );
+      } else if (state.journalView.name === "details") {
+        screenContent = (
+          <JournalWorkoutDetails
+            data={state.data}
+            workoutLogId={state.journalView.workoutLogId}
+            onBack={goBack}
+            onDelete={handleDeleteWorkoutLog}
+          />
+        );
       } else {
         screenContent = (
           <JournalView
             data={state.data}
             journalFilter={state.journalFilter}
             journalView={state.journalView}
+            visibleCount={state.journalVisibleCount}
             onBack={goBack}
             onClearFilter={clearJournalFilter}
-            onDeleteWorkout={handleDeleteWorkoutLog}
             onOpenFilter={openJournalFilter}
             onOpenWorkout={openJournalWorkout}
+            onShowMore={showMoreJournalEntries}
             onToggleFilterExercise={toggleJournalFilterExercise}
             onToggleFilterMuscleGroup={toggleJournalFilterMuscleGroup}
           />
@@ -3061,6 +3156,7 @@ function App() {
     openExerciseCreate,
     openExerciseEdit,
     openExerciseGroup,
+    openExerciseHistory,
     openExerciseReplacement,
     openExerciseTechnique,
     openFreeWorkoutPreparation,
@@ -3076,6 +3172,8 @@ function App() {
     openWorkoutPreparation,
     removeDraftExercise,
     removeFreeWorkoutExercise,
+    showMoreExerciseHistory,
+    showMoreJournalEntries,
     shouldReduceMotion,
     toggleFreeWorkoutMuscleGroup,
     state.activeTab,
@@ -3089,6 +3187,7 @@ function App() {
     state.isStandalone,
     state.journalFilter,
     state.journalView,
+    state.journalVisibleCount,
     state.planView,
     state.templateDraft,
     state.trainingDayDraft,
@@ -3285,6 +3384,7 @@ function HomeView({
   onActivePreviousExercise,
   onActiveNextExercise,
   onFinishActiveWorkout,
+  onOpenExerciseHistory,
   onOpenExerciseTechnique,
   onOpenSettings,
   onOpenFreeWorkoutPreparation,
@@ -3332,6 +3432,7 @@ function HomeView({
         onRemoveSet={onRemoveActiveSet}
         onSetChange={onActiveSetChange}
         onOpenReplacement={onOpenExerciseReplacement}
+        onOpenHistory={onOpenExerciseHistory}
         onOpenTechnique={onOpenExerciseTechnique}
         onPreviousExercise={onActivePreviousExercise}
         onNextExercise={onActiveNextExercise}
@@ -3997,6 +4098,7 @@ function ActiveWorkoutScreen({
   onRemoveSet,
   onSetChange,
   onOpenReplacement,
+  onOpenHistory,
   onOpenTechnique,
   onPreviousExercise,
   onNextExercise,
@@ -4088,6 +4190,7 @@ function ActiveWorkoutScreen({
     name: exerciseLog.exerciseNameSnapshot,
     mediaUrl: exerciseMediaUrl,
   };
+  const previousSetsLabel = formatSetList(exerciseLog.previousSets);
   const progressionAdvice = buildProgressionAdvice({
     data,
     session,
@@ -4108,7 +4211,7 @@ function ActiveWorkoutScreen({
         <header className="screen-header active-workout-header">
           <ScreenTitle onBack={onBack}>{exerciseProgressLabel}</ScreenTitle>
           <p className="active-exercise-title">
-            Упражнение {exerciseLog.exerciseNameSnapshot}
+            Упражнение: {exerciseLog.exerciseNameSnapshot}
           </p>
           <div className="active-exercise-actions">
             <button
@@ -4130,11 +4233,17 @@ function ActiveWorkoutScreen({
           </div>
         </header>
 
-        <section className="panel active-exercise-panel">
-          <p className="active-previous-sets">
-            <span>Прошлый раз:</span> <strong>{formatSetList(exerciseLog.previousSets)}</strong>
-          </p>
-        </section>
+        <button
+          className="action-button secondary-action active-exercise-history-button"
+          type="button"
+          aria-label={`История упражнения. Прошлый раз: ${previousSetsLabel}`}
+          disabled={!exerciseLog.exerciseId}
+          onClick={() => onOpenHistory(exerciseLog.exerciseId, exerciseLog.exerciseNameSnapshot)}
+        >
+          <span className="active-previous-sets">
+            <span>Прошлый раз:</span> <strong>{previousSetsLabel}</strong>
+          </span>
+        </button>
 
         <section className="panel active-exercise-panel">
           <p className="active-previous-sets">
@@ -4347,6 +4456,7 @@ function PlanView({
   onOpenExerciseGroup,
   onOpenExerciseCreate,
   onOpenExerciseEdit,
+  onOpenExerciseHistory,
   onOpenExerciseTechnique,
   onTemplateNameChange,
   onAddDraftExercise,
@@ -4427,6 +4537,7 @@ function PlanView({
         onMediaUrlChange={onExerciseMediaUrlChange}
         onSave={onSaveExercise}
         onDelete={onDeleteExercise}
+        onOpenHistory={onOpenExerciseHistory}
       />
     );
   }
@@ -5039,7 +5150,7 @@ function ExerciseGifPreview({ mediaUrl }) {
   );
 }
 
-function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMediaUrlChange, onSave, onDelete }) {
+function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMediaUrlChange, onSave, onDelete, onOpenHistory }) {
   const details =
     planView.name === "editExercise"
       ? buildExerciseEditingData(data, planView.exerciseId)
@@ -5105,6 +5216,12 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
           <ExerciseGifPreview mediaUrl={draft.mediaUrl} />
         </div>
 
+        {isEdit ? (
+          <button className="action-button secondary-action" type="button" onClick={() => onOpenHistory(planView.exerciseId)}>
+            <span>История упражнения</span>
+          </button>
+        ) : null}
+
         <button className="action-button" type="submit">
           <span>Сохранить упражнение</span>
         </button>
@@ -5119,40 +5236,97 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
   );
 }
 
+function JournalCardHeader({ date, title, showChevron = false }) {
+  const dateParts = getJournalDateParts(date);
+
+  return (
+    <div className="journal-card-header">
+      <div className="journal-card-date" aria-label={formatJournalDate(date)}>
+        <strong>{dateParts.day}</strong>
+        <span>{dateParts.month}</span>
+      </div>
+      <div className="journal-card-title">
+        <h2>{title}</h2>
+      </div>
+      {showChevron ? <span className="journal-card-chevron" aria-hidden="true" /> : null}
+    </div>
+  );
+}
+
+function JournalSetList({ sets }) {
+  return (
+    <ol className="journal-set-list">
+      {sets.map((set, index) => (
+        <li key={index}>
+          <span>{set.setNumber ?? index + 1} подход</span>
+          <strong>{formatWorkoutSet(set)}</strong>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function ExerciseHistoryScreen({ data, exerciseId, exerciseName, visibleCount, onBack, onShowMore }) {
+  const history = useMemo(() => buildExerciseHistory(data, exerciseId), [data, exerciseId]);
+  const name = exerciseName ?? data.exercises.find((exercise) => exercise.id === exerciseId)?.name;
+
+  return (
+    <section className="screen journal-detail-screen">
+      <header className="screen-header">
+        <ScreenTitle onBack={onBack}>История упр</ScreenTitle>
+        {name ? <p className="screen-subtitle">{name}</p> : null}
+      </header>
+      {history.length ? (
+        <>
+          {history.slice(0, visibleCount).map((entry) => (
+            <article key={entry.id} className="journal-card exercise-history-entry">
+              <JournalCardHeader date={entry.date} title={entry.name} />
+              <JournalSetList sets={entry.sets} />
+            </article>
+          ))}
+          {history.length > visibleCount ? (
+            <button
+              className="action-button secondary-action journal-show-more"
+              type="button"
+              onClick={onShowMore}
+            >
+              Показать ещё
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <div className="empty-state compact-empty-state">
+          <h2>Записанных подходов пока нет</h2>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function JournalView({
   data,
   journalFilter,
   journalView,
+  visibleCount,
   onBack,
   onClearFilter,
-  onDeleteWorkout,
   onOpenFilter,
   onOpenWorkout,
+  onShowMore,
   onToggleFilterExercise,
   onToggleFilterMuscleGroup,
 }) {
+  const hasActiveFilter = Boolean(journalFilter.selectedMuscleGroupIds?.length);
+  const needsFilterOptions = hasActiveFilter || journalView.name === "filter";
   const allEntries = useMemo(() => buildJournalEntries(data), [data]);
   const filterOptions = useMemo(
-    () => buildJournalFilterOptions(data, allEntries),
-    [allEntries, data],
+    () => (needsFilterOptions ? buildJournalFilterOptions(data, allEntries) : []),
+    [allEntries, data, needsFilterOptions],
   );
   const entries = useMemo(
     () => filterJournalEntries(allEntries, journalFilter, filterOptions),
     [allEntries, filterOptions, journalFilter],
   );
-  const hasActiveFilter = Boolean(journalFilter.selectedMuscleGroupIds?.length);
-
-  if (journalView.name === "details") {
-    return (
-      <JournalWorkoutDetails
-        data={data}
-        workoutLogId={journalView.workoutLogId}
-        onBack={onBack}
-        onDelete={onDeleteWorkout}
-      />
-    );
-  }
-
   if (journalView.name === "filter") {
     return (
       <JournalFilterScreen
@@ -5196,9 +5370,7 @@ function JournalView({
 
       {entries.length ? (
         <div className="journal-list">
-          {entries.map((entry) => {
-            const dateParts = getJournalDateParts(entry.date);
-
+          {entries.slice(0, visibleCount).map((entry) => {
             return (
               <button
                 key={entry.id}
@@ -5206,18 +5378,7 @@ function JournalView({
                 type="button"
                 onClick={() => onOpenWorkout(entry.id)}
               >
-                <div className="journal-card-header">
-                  <div className="journal-card-date" aria-label={formatJournalDate(entry.date)}>
-                    <strong>{dateParts.day}</strong>
-                    <span>{dateParts.month}</span>
-                  </div>
-
-                  <div className="journal-card-title">
-                    <h2>{entry.name}</h2>
-                  </div>
-
-                  <span className="journal-card-chevron" aria-hidden="true" />
-                </div>
+                <JournalCardHeader date={entry.date} title={entry.name} showChevron />
 
                 <div className="journal-card-groups">
                   {entry.sections.map((section) => (
@@ -5238,6 +5399,11 @@ function JournalView({
               </button>
             );
           })}
+          {entries.length > visibleCount ? (
+            <button className="action-button secondary-action journal-show-more" type="button" onClick={onShowMore}>
+              Показать ещё
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className="empty-state compact-empty-state journal-empty-state">
@@ -5456,14 +5622,7 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete }) {
                 </h2>
 
                 {exercise.sets.length ? (
-                  <ol className="journal-set-list">
-                    {exercise.sets.map((set, setIndex) => (
-                      <li key={`${exercise.id}-${setIndex}`}>
-                        <span>{set.setNumber ?? setIndex + 1} подход</span>
-                        <strong>{formatWorkoutSet(set)}</strong>
-                      </li>
-                    ))}
-                  </ol>
+                  <JournalSetList sets={exercise.sets} />
                 ) : (
                   <p className="journal-empty-sets">Подходы не выполнены</p>
                 )}

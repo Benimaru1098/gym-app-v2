@@ -224,8 +224,16 @@ function getExerciseNamesFromSnapshot(snapshot) {
   return [];
 }
 
-function getWorkoutLogName(data, log) {
-  const workoutGroupsById = indexById(data.workoutGroups ?? []);
+function createJournalLookup(data) {
+  return {
+    workoutGroupsById: indexById(data.workoutGroups ?? []),
+    muscleGroupsById: indexById(data.muscleGroups ?? []),
+    templatesById: indexById(data.exerciseTemplates ?? []),
+    exercisesById: indexById(data.exercises ?? []),
+  };
+}
+
+function getWorkoutLogName({ workoutGroupsById }, log) {
   const workoutGroupId = getWorkoutLogGroupId(log);
 
   return (
@@ -270,9 +278,7 @@ function getJournalTemplateId(log, muscleGroupId, source = {}) {
   );
 }
 
-function getJournalSectionFallbacks(data, log, muscleGroupId, source = {}) {
-  const muscleGroupsById = indexById(data.muscleGroups ?? []);
-  const templatesById = indexById(data.exerciseTemplates ?? []);
+function getJournalSectionFallbacks({ muscleGroupsById, templatesById }, log, muscleGroupId, source = {}) {
   const templateSnapshot = muscleGroupId ? getTemplateSnapshotForMuscleGroup(log, muscleGroupId) : null;
   const muscleGroupSnapshot = muscleGroupId ? getMuscleGroupSnapshot(log, muscleGroupId) : null;
   const currentMuscleGroup = muscleGroupId ? muscleGroupsById.get(muscleGroupId) : null;
@@ -309,9 +315,34 @@ function normalizeJournalSet(set, index) {
   };
 }
 
-function getJournalExerciseName(data, exerciseLog) {
-  const exercisesById = indexById(data.exercises ?? []);
+export function buildExerciseHistory(data, exerciseId) {
+  const workoutGroupsById = indexById(data.workoutGroups ?? []);
 
+  return (data.workoutLogs ?? [])
+    .flatMap((log) => {
+      const exerciseLog = collectExerciseLogEntries(log).find(
+        (entry) => entry.exerciseId === exerciseId && entry.sets.length > 0,
+      );
+      const sets = (exerciseLog?.sets ?? []).map(normalizeJournalSet).filter(
+        ({ weightKg, reps }) =>
+          (weightKg !== null && weightKg !== "") || (reps !== null && reps !== ""),
+      );
+
+      if (!sets.length) {
+        return [];
+      }
+
+      return [{
+        id: log.id,
+        date: getWorkoutLogDate(log),
+        name: getWorkoutLogName({ workoutGroupsById }, log),
+        sets,
+      }];
+    })
+    .sort((first, second) => (second.date?.getTime() ?? 0) - (first.date?.getTime() ?? 0));
+}
+
+function getJournalExerciseName(exercisesById, exerciseLog) {
   return (
     (exerciseLog.exerciseId ? exercisesById.get(exerciseLog.exerciseId)?.name : null) ??
     exerciseLog.exerciseNameSnapshot ??
@@ -321,8 +352,7 @@ function getJournalExerciseName(data, exerciseLog) {
   );
 }
 
-function getJournalPlannedExerciseName(data, exerciseLog) {
-  const exercisesById = indexById(data.exercises ?? []);
+function getJournalPlannedExerciseName(exercisesById, exerciseLog) {
   const plannedExerciseId =
     exerciseLog.plannedExerciseId ??
     exerciseLog.replacement?.plannedExerciseId ??
@@ -337,14 +367,12 @@ function getJournalPlannedExerciseName(data, exerciseLog) {
   );
 }
 
-function normalizeJournalSnapshotExercise(data, snapshotExercise, index) {
+function normalizeJournalSnapshotExercise(exercisesById, snapshotExercise, index) {
   const exerciseId =
     typeof snapshotExercise === "object"
       ? snapshotExercise?.id ?? snapshotExercise?.exerciseId ?? null
       : null;
-  const currentExercise = exerciseId
-    ? (data.exercises ?? []).find((exercise) => exercise.id === exerciseId)
-    : null;
+  const currentExercise = exerciseId ? exercisesById.get(exerciseId) : null;
 
   return {
     id: exerciseId ?? `snapshot-${index}`,
@@ -357,13 +385,21 @@ function normalizeJournalSnapshotExercise(data, snapshotExercise, index) {
   };
 }
 
-function normalizeJournalExercise(data, exerciseLog, index) {
-  const name = getJournalExerciseName(data, exerciseLog);
+function normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails) {
+  const summary = {
+    id: exerciseLog.exerciseId ?? `exercise-${index}`,
+    hasStableId: Boolean(exerciseLog.exerciseId),
+    name: getJournalExerciseName(exercisesById, exerciseLog),
+  };
+  if (!includeDetails) {
+    return summary;
+  }
+
   const plannedExerciseId =
     exerciseLog.plannedExerciseId ??
     exerciseLog.replacement?.plannedExerciseId ??
     null;
-  const plannedName = getJournalPlannedExerciseName(data, exerciseLog);
+  const plannedName = getJournalPlannedExerciseName(exercisesById, exerciseLog);
   const isReplacement = Boolean(
     exerciseLog.isReplacement ||
     exerciseLog.replacement ||
@@ -371,9 +407,7 @@ function normalizeJournalExercise(data, exerciseLog, index) {
   );
 
   return {
-    id: exerciseLog.exerciseId ?? `exercise-${index}`,
-    hasStableId: Boolean(exerciseLog.exerciseId),
-    name,
+    ...summary,
     plannedExerciseId,
     plannedName: isReplacement ? plannedName ?? "Плановое упражнение" : null,
     isReplacement,
@@ -381,7 +415,8 @@ function normalizeJournalExercise(data, exerciseLog, index) {
   };
 }
 
-function buildJournalSections(data, log) {
+function buildJournalSections(lookup, log, includeDetails) {
+  const { exercisesById } = lookup;
   const sections = [];
   const sectionsById = new Map();
   let unknownSectionIndex = 0;
@@ -392,7 +427,7 @@ function buildJournalSections(data, log) {
       source.muscleGroupId ??
       source.muscleGroup?.id ??
       `unknown-muscle-${unknownSectionIndex++}`;
-    const fallbacks = getJournalSectionFallbacks(data, log, id, source);
+    const fallbacks = getJournalSectionFallbacks(lookup, log, id, source);
     const existing = sectionsById.get(id);
     const hasSnapshotMuscleName = Boolean(
       source.muscleGroupNameSnapshot ||
@@ -469,7 +504,7 @@ function buildJournalSections(data, log) {
     if (Array.isArray(muscleLog.exerciseLogs)) {
       section.exercises.push(
         ...dedupeExerciseLogEntries(muscleLog.exerciseLogs).map((exerciseLog, index) =>
-          normalizeJournalExercise(data, exerciseLog, index),
+          normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails),
         ),
       );
     }
@@ -482,7 +517,9 @@ function buildJournalSections(data, log) {
 
     for (const exerciseLog of dedupeExerciseLogEntries(exerciseLogs)) {
       const section = ensureSection(exerciseLog.muscleGroupId, exerciseLog);
-      section.exercises.push(normalizeJournalExercise(data, exerciseLog, section.exercises.length));
+      section.exercises.push(
+        normalizeJournalExercise(exercisesById, exerciseLog, section.exercises.length, includeDetails),
+      );
     }
   }
 
@@ -497,28 +534,30 @@ function buildJournalSections(data, log) {
       : getExerciseNamesFromSnapshot(snapshot);
 
     section.exercises = snapshotExercises
-      .map((exercise, index) => normalizeJournalSnapshotExercise(data, exercise, index))
+      .map((exercise, index) => normalizeJournalSnapshotExercise(exercisesById, exercise, index))
       .filter((exercise) => exercise.name);
   }
 
   return sections.filter((section) => section.exercises.length || section.templateName);
 }
 
-function buildJournalEntry(data, log) {
+function buildJournalEntry(lookup, log, includeDetails) {
   const date = getWorkoutLogDate(log);
 
   return {
     id: log.id,
-    name: getWorkoutLogName(data, log),
+    name: getWorkoutLogName(lookup, log),
     date: date?.toISOString() ?? log.date ?? null,
     timestamp: date?.getTime() ?? 0,
-    sections: buildJournalSections(data, log),
+    sections: buildJournalSections(lookup, log, includeDetails),
   };
 }
 
 export function buildJournalEntries(data) {
+  const lookup = createJournalLookup(data);
+
   return [...(data.workoutLogs ?? [])]
-    .map((log) => buildJournalEntry(data, log))
+    .map((log) => buildJournalEntry(lookup, log, false))
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
@@ -603,7 +642,7 @@ export function filterJournalEntries(entries, filter, filterOptions) {
 export function buildJournalWorkoutDetails(data, workoutLogId) {
   const log = (data.workoutLogs ?? []).find((item) => item.id === workoutLogId) ?? null;
 
-  return log ? buildJournalEntry(data, log) : null;
+  return log ? buildJournalEntry(createJournalLookup(data), log, true) : null;
 }
 
 function getSelectedTemplateForMuscleGroup(data, workoutGroup, muscleGroupId) {
@@ -854,8 +893,8 @@ export function buildWorkoutPreparationData(data, workoutGroupId) {
     };
   }
 
-  const muscleGroupsById = indexById(data.muscleGroups);
-  const exercisesById = indexById(data.exercises);
+  const lookup = createJournalLookup(data);
+  const { muscleGroupsById, exercisesById } = lookup;
   const workoutLogs = getWorkoutLogsForGroup(data, workoutGroup);
   const lastWorkoutLog = workoutLogs[0]?.log ?? null;
   const lastWorkoutDate = workoutLogs[0]?.date?.toISOString() ?? null;
@@ -906,17 +945,17 @@ export function buildWorkoutPreparationData(data, workoutGroupId) {
           const muscleGroupLog = getMuscleGroupLogForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
           const exerciseLogs = getExerciseLogEntriesForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
           const exerciseNamesFromLogs = exerciseLogs
-            .map((entry) => getJournalExerciseName(data, entry))
+            .map((entry) => getJournalExerciseName(exercisesById, entry))
             .filter(Boolean);
           const exerciseNames = Array.isArray(snapshot?.exercises)
             ? snapshot.exercises
                 .map((exercise, index) =>
-                  normalizeJournalSnapshotExercise(data, exercise, index).name,
+                  normalizeJournalSnapshotExercise(exercisesById, exercise, index).name,
                 )
                 .filter(Boolean)
             : getExerciseNamesFromSnapshot(snapshot);
           const journalFallbacks = getJournalSectionFallbacks(
-            data,
+            lookup,
             lastWorkoutLog,
             section.muscleGroup.id,
             muscleGroupLog ?? snapshot ?? {},

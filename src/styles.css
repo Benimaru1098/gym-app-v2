@@ -811,6 +811,10 @@ h2 {
   gap: 18px;
 }
 
+.journal-show-more {
+  overflow-anchor: none;
+}
+
 .journal-card {
   display: grid;
   gap: 0;
@@ -828,7 +832,7 @@ h2 {
   text-align: left;
 }
 
-.journal-card:active {
+button.journal-card:active {
   border-color: var(--accent-line);
 }
 
@@ -1076,6 +1080,18 @@ h2 {
   line-height: 1.05;
 }
 
+.exercise-history-entry {
+  overflow-wrap: anywhere;
+}
+
+.exercise-history-entry .journal-card-date {
+  flex-shrink: 0;
+}
+
+.exercise-history-entry .journal-set-list {
+  padding: 15px;
+}
+
 .active-workout-screen {
   gap: 14px;
 }
@@ -1112,6 +1128,13 @@ h2 {
   min-height: 40px;
   padding: 8px 12px;
   font-size: 14px;
+}
+
+.active-exercise-history-button {
+  justify-content: flex-start;
+  min-height: 40px;
+  padding: 8px 12px;
+  text-align: left;
 }
 
 .active-previous-sets {
@@ -1725,7 +1748,7 @@ h2 {
 .exercise-media-preview {
   display: grid;
   place-items: center;
-  min-height: 343px;
+  min-height: 240px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1745,7 +1768,7 @@ h2 {
 .exercise-media-preview img {
   display: block;
   width: 100%;
-  max-height: 320px;
+  max-height: 220px;
   border-radius: 6px;
   object-fit: contain;
 }
