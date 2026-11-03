@@ -30,6 +30,8 @@ async function probe(query) {
       error: body?.error ?? (results === null ? "unexpected_response" : ""),
       stage: body?.stage ?? "",
       upstream: body?.upstreamStatus ?? "",
+      reason: body?.reason ?? "",
+      networkCode: body?.networkCode ?? "",
       cache: response.headers.get("x-vercel-cache") ?? "",
       ms: Math.round(performance.now() - start),
     };
