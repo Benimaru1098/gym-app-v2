@@ -4211,7 +4211,7 @@ function ActiveWorkoutScreen({
         <header className="screen-header active-workout-header">
           <ScreenTitle onBack={onBack}>{exerciseProgressLabel}</ScreenTitle>
           <p className="active-exercise-title">
-            Упражнение: {exerciseLog.exerciseNameSnapshot}
+            {exerciseLog.exerciseNameSnapshot}
           </p>
           <div className="active-exercise-actions">
             <button
