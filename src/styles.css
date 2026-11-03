@@ -2161,9 +2161,8 @@ button.journal-card:active {
 }
 
 .empty-state h2 {
-  max-width: 270px;
   color: var(--text);
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .empty-state p {

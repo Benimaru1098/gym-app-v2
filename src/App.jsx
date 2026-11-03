@@ -5407,12 +5407,11 @@ function JournalView({
         </div>
       ) : (
         <div className="empty-state compact-empty-state journal-empty-state">
-          <SvgIcon name="journal" />
           <h2>{allEntries.length ? "По фильтру ничего не найдено" : "Пока нет завершённых тренировок"}</h2>
           <p>
             {allEntries.length
               ? "Измени выбранные мышцы или упражнения."
-              : "После завершения тренировки записи появятся здесь."}
+              : "После завершения тренировки, записи появятся здесь."}
           </p>
         </div>
       )}
