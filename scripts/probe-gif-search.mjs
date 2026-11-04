@@ -32,8 +32,6 @@ async function probe(query) {
       upstream: body?.upstreamStatus ?? "",
       reason: body?.reason ?? "",
       networkCode: body?.networkCode ?? "",
-      tokenEntry: response.headers.get("x-gif-token-entry") ?? body?.tokenEntry ?? "",
-      missingTokenPages: body?.missingTokenPages ? JSON.stringify(body.missingTokenPages) : "",
       cache: response.headers.get("x-vercel-cache") ?? "",
       ms: Math.round(performance.now() - start),
     };

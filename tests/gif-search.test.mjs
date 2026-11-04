@@ -24,10 +24,7 @@ test("requests GIFs with the token and returns bounded, deduplicated HTTPS resul
   const upstream = t.mock.method(globalThis, "fetch", async (url) => {
     assert.equal(url.origin, "https://duckduckgo.com");
     assert.equal(url.searchParams.get("q"), query);
-    if (url.pathname === "/") {
-      assert.equal(url.searchParams.get("iar"), "images");
-      return new Response(`<script>vqd='${token}'</script>`);
-    }
+    if (url.pathname === "/") return new Response(`<script>vqd='${token}'</script>`);
 
     assert.equal(url.pathname, "/i.js");
     assert.equal(url.searchParams.get("vqd"), token);
@@ -48,7 +45,6 @@ test("requests GIFs with the token and returns bounded, deduplicated HTTPS resul
   const response = await gifApi.fetch(new Request(`${endpoint}?q=${encodeURIComponent("  жим   лёжа  ")}`));
   assert.equal(response.status, 200);
   assert.match(response.headers.get("cache-control"), /s-maxage=/);
-  assert.equal(response.headers.get("x-gif-token-entry"), "images");
   const results = await response.json();
   assert.equal(results.length, 12);
   assert.deepEqual(results[0], { image, thumbnail, source });
@@ -60,7 +56,7 @@ test("does not retry a 202 response from the token page", async (t) => {
   const response = await gifApi.fetch(validRequest());
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.deepEqual(await response.json(), { error: "upstream_blocked", stage: "token", upstreamStatus: 202, tokenEntry: "images" });
+  assert.deepEqual(await response.json(), { error: "upstream_blocked", stage: "token", upstreamStatus: 202 });
   assert.equal(upstream.mock.callCount(), 1);
 });
 
@@ -72,30 +68,26 @@ test("distinguishes a rate limit on the image endpoint from empty results", asyn
 
   const response = await gifApi.fetch(validRequest());
   assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), { error: "upstream_blocked", stage: "images", upstreamStatus: 429, tokenEntry: "images" });
+  assert.deepEqual(await response.json(), { error: "upstream_blocked", stage: "images", upstreamStatus: 429 });
   assert.equal(upstream.mock.callCount(), 2);
 });
 
 test("separates an empty search from missing tokens and invalid JSON", async (t) => {
   let tokenPage = "not a search page";
   let imagesPage = "not JSON";
-  t.mock.method(globalThis, "fetch", async (url) => new Response(url.pathname === "/i.js" ? imagesPage : tokenPage));
+  t.mock.method(globalThis, "fetch", async (url) => new Response(url.pathname === "/" ? tokenPage : imagesPage));
 
   const missingToken = await gifApi.fetch(validRequest());
   assert.equal(missingToken.status, 502);
   assert.deepEqual(await missingToken.json(), {
-    error: "upstream_error", stage: "token", upstreamStatus: 200, reason: "missing_token", tokenEntry: "html",
-    missingTokenPages: [
-      { entry: "images", upstreamStatus: 200, hasTokenMarker: false },
-      { entry: "html", upstreamStatus: 200, hasTokenMarker: false },
-    ],
+    error: "upstream_error", stage: "token", upstreamStatus: 200, reason: "missing_token",
   });
 
   tokenPage = `vqd=\"${token}\"`;
   const invalidJson = await gifApi.fetch(validRequest());
   assert.equal(invalidJson.status, 502);
   assert.deepEqual(await invalidJson.json(), {
-    error: "upstream_error", stage: "images", upstreamStatus: 200, reason: "invalid_json", tokenEntry: "images",
+    error: "upstream_error", stage: "images", upstreamStatus: 200, reason: "invalid_json",
   });
 
   imagesPage = JSON.stringify({ results: [] });
@@ -110,7 +102,7 @@ test("reports a failed connection without including the raw error or the token",
     throw new TypeError("private request details", { cause: { code: "ECONNRESET" } });
   });
 
-  const expected = { error: "upstream_error", reason: "fetch_failed", networkCode: "ECONNRESET", tokenEntry: "images" };
+  const expected = { error: "upstream_error", reason: "fetch_failed", networkCode: "ECONNRESET" };
   const tokenFailure = await gifApi.fetch(validRequest());
   assert.equal(tokenFailure.status, 502);
   assert.deepEqual(await tokenFailure.json(), { ...expected, stage: "token" });
@@ -119,40 +111,4 @@ test("reports a failed connection without including the raw error or the token",
   const imageFailure = await gifApi.fetch(validRequest());
   assert.equal(imageFailure.status, 502);
   assert.deepEqual(await imageFailure.json(), { ...expected, stage: "images" });
-});
-
-test("uses the HTML search form if the main page has no usable token", async (t) => {
-  const paths = [];
-  t.mock.method(globalThis, "fetch", async (url) => {
-    paths.push(`${url.hostname}${url.pathname}`);
-    assert.equal(url.searchParams.get("q"), "bench press");
-    if (url.pathname === "/") return new Response("<script>vqd = 'unknown';</script>");
-    if (url.pathname === "/html/") return new Response(`<input value='${token}' type='hidden' name='vqd'>`);
-
-    assert.equal(url.searchParams.get("vqd"), token);
-    return Response.json({ results: [{ image: "https://example.com/a.gif", thumbnail: "https://example.com/a.jpg" }] });
-  });
-
-  const response = await gifApi.fetch(validRequest());
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("x-gif-token-entry"), "html");
-  assert.equal((await response.json()).length, 1);
-  assert.deepEqual(paths, ["duckduckgo.com/", "html.duckduckgo.com/html/", "duckduckgo.com/i.js"]);
-});
-
-test("stops at a challenge page even when DuckDuckGo responds with HTTP 200", async (t) => {
-  const challenge = `<form id="challenge-form">vqd='${token}'</form>`;
-  const upstream = t.mock.method(globalThis, "fetch", async () => new Response(challenge));
-  const expected = { error: "upstream_blocked", upstreamStatus: 200, reason: "challenge_page", tokenEntry: "images" };
-
-  const first = await gifApi.fetch(validRequest());
-  assert.equal(first.status, 503);
-  assert.deepEqual(await first.json(), { ...expected, stage: "token" });
-  assert.equal(upstream.mock.callCount(), 1);
-
-  upstream.mock.mockImplementationOnce(async () => new Response(`vqd='${token}'`));
-  const second = await gifApi.fetch(validRequest());
-  assert.equal(second.status, 503);
-  assert.deepEqual(await second.json(), { ...expected, stage: "images" });
-  assert.equal(upstream.mock.callCount(), 3);
 });
