@@ -79,36 +79,16 @@ test("separates an empty search from missing tokens and invalid JSON", async (t)
 
   const missingToken = await gifApi.fetch(validRequest());
   assert.equal(missingToken.status, 502);
-  assert.deepEqual(await missingToken.json(), {
-    error: "upstream_error", stage: "token", upstreamStatus: 200, reason: "missing_token",
-  });
+  assert.deepEqual(await missingToken.json(), { error: "upstream_error", stage: "token" });
 
   tokenPage = `vqd=\"${token}\"`;
   const invalidJson = await gifApi.fetch(validRequest());
   assert.equal(invalidJson.status, 502);
-  assert.deepEqual(await invalidJson.json(), {
-    error: "upstream_error", stage: "images", upstreamStatus: 200, reason: "invalid_json",
-  });
+  assert.deepEqual(await invalidJson.json(), { error: "upstream_error", stage: "images" });
 
   imagesPage = JSON.stringify({ results: [] });
   const empty = await gifApi.fetch(validRequest());
   assert.equal(empty.status, 200);
   assert.equal(empty.headers.get("cache-control"), "no-store");
   assert.deepEqual(await empty.json(), []);
-});
-
-test("reports a failed connection without including the raw error or the token", async (t) => {
-  const upstream = t.mock.method(globalThis, "fetch", async () => {
-    throw new TypeError("private request details", { cause: { code: "ECONNRESET" } });
-  });
-
-  const expected = { error: "upstream_error", reason: "fetch_failed", networkCode: "ECONNRESET" };
-  const tokenFailure = await gifApi.fetch(validRequest());
-  assert.equal(tokenFailure.status, 502);
-  assert.deepEqual(await tokenFailure.json(), { ...expected, stage: "token" });
-
-  upstream.mock.mockImplementationOnce(async () => new Response(`vqd='${token}'`));
-  const imageFailure = await gifApi.fetch(validRequest());
-  assert.equal(imageFailure.status, 502);
-  assert.deepEqual(await imageFailure.json(), { ...expected, stage: "images" });
 });

@@ -54,49 +54,32 @@ async function searchGifs(request) {
 
   const signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   let stage = "token";
-  let upstreamStatus;
 
   try {
     const searchUrl = new URL(SEARCH_URL);
     searchUrl.search = new URLSearchParams({ q: query, ia: "images" });
     const searchPage = await fetch(searchUrl, { signal, headers: { Accept: "text/html" } });
-    upstreamStatus = searchPage.status;
     if (!searchPage.ok || BLOCK_STATUSES.has(searchPage.status)) return upstreamFailure(searchPage, stage);
 
     const html = await searchPage.text();
     const vqd = html.match(/\bvqd=["']?(\d+-\d+(?:-\d+)?)(?=["'&;\s]|$)/)?.[1];
-    if (!vqd) {
-      return failure("upstream_error", 502, { stage, upstreamStatus, reason: "missing_token" });
-    }
+    if (!vqd) return failure("upstream_error", 502, { stage });
 
     stage = "images";
-    upstreamStatus = undefined;
     const imagesUrl = new URL(IMAGE_SEARCH_URL);
     imagesUrl.search = new URLSearchParams({ q: query, vqd, o: "json", l: "wt-wt", p: "1", f: ",,type:gif,," });
     const imagesPage = await fetch(imagesUrl, { signal, headers: { Accept: "application/json", Referer: SEARCH_URL } });
-    upstreamStatus = imagesPage.status;
     if (!imagesPage.ok || BLOCK_STATUSES.has(imagesPage.status)) return upstreamFailure(imagesPage, stage);
 
     const data = await imagesPage.json();
-    if (!Array.isArray(data?.results)) {
-      return failure("upstream_error", 502, { stage, upstreamStatus, reason: "invalid_results" });
-    }
+    if (!Array.isArray(data?.results)) return failure("upstream_error", 502, { stage });
 
     const results = extractResults(data.results);
     return Response.json(results, {
       headers: { "Cache-Control": results.length ? "public, max-age=0, s-maxage=900" : "no-store" },
     });
-  } catch (error) {
-    if (signal.aborted) return failure("upstream_timeout", 504, { stage, upstreamStatus });
-
-    if (upstreamStatus === undefined) {
-      const code = error?.cause?.code;
-      const networkCode = typeof code === "string" && /^[A-Z][A-Z0-9_]{2,47}$/.test(code) ? code : undefined;
-      return failure("upstream_error", 502, { stage, reason: "fetch_failed", networkCode });
-    }
-
-    const reason = stage === "images" && error instanceof SyntaxError ? "invalid_json" : "response_read_failed";
-    return failure("upstream_error", 502, { stage, upstreamStatus, reason });
+  } catch {
+    return signal.aborted ? failure("upstream_timeout", 504, { stage }) : failure("upstream_error", 502, { stage });
   }
 }
 
