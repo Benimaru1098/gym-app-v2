@@ -8,11 +8,6 @@ const UPSTREAM_TIMEOUT_MS = 6000;
 const MAX_RESULTS = 12;
 const BLOCK_STATUSES = new Set([202, 403, 429]);
 const CHALLENGE_PAGE = /anomaly-modal|id\s*=\s*["']challenge-form["']|bots use duckduckgo too/i;
-// Keep the same client headers for token acquisition and the image request.
-const CLIENT_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-  "Accept-Language": "en-US,en;q=0.9",
-};
 
 function extractToken(html) {
   const inline = html.match(/\bvqd\s*=\s*["']?(\d+-\d+(?:-\d+)?)(?=["'&;\s]|$)/)?.[1];
@@ -90,10 +85,7 @@ async function searchGifs(request) {
       upstreamStatus = undefined;
       const searchUrl = new URL(page.url);
       searchUrl.search = new URLSearchParams({ q: query, ...page.params });
-      const searchPage = await fetch(searchUrl, {
-        signal,
-        headers: { ...CLIENT_HEADERS, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
-      });
+      const searchPage = await fetch(searchUrl, { signal, headers: { Accept: "text/html" } });
       upstreamStatus = searchPage.status;
       if (!searchPage.ok || BLOCK_STATUSES.has(upstreamStatus)) return upstreamFailure(searchPage, stage, diagnostics());
 
@@ -115,10 +107,7 @@ async function searchGifs(request) {
     upstreamStatus = undefined;
     const imagesUrl = new URL(IMAGE_SEARCH_URL);
     imagesUrl.search = new URLSearchParams({ q: query, vqd, o: "json", l: "wt-wt", p: "1", f: ",,type:gif,," });
-    const imagesPage = await fetch(imagesUrl, {
-      signal,
-      headers: { ...CLIENT_HEADERS, Accept: "application/json", Referer: SEARCH_URL },
-    });
+    const imagesPage = await fetch(imagesUrl, { signal, headers: { Accept: "application/json", Referer: SEARCH_URL } });
     upstreamStatus = imagesPage.status;
     if (!imagesPage.ok || BLOCK_STATUSES.has(upstreamStatus)) return upstreamFailure(imagesPage, stage, diagnostics());
 
