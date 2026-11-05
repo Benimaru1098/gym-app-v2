@@ -3764,7 +3764,7 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
         </div>
         <a
           className="action-button settings-contact-button"
-          href="https://t.me/x_benimaru_x"
+          href="https://t.me/ai_profix"
           target="_blank"
           rel="noopener noreferrer"
         >
