@@ -1,3 +1,5 @@
+import { collectExerciseLogEntries } from "./selectors.js";
+
 const HISTORY_LIMIT = 5;
 const MIN_TARGET_REPS = 8;
 const MAX_TARGET_REPS = 12;
@@ -64,7 +66,7 @@ function getRootExerciseLogs(log) {
   return Array.isArray(log?.exerciseLogs) ? log.exerciseLogs : [];
 }
 
-function getNestedExerciseLogs(log) {
+function getNestedExerciseLogs(log, exerciseId = null) {
   const entries = [];
 
   for (const muscleLog of log?.muscleGroupLogs ?? []) {
@@ -73,9 +75,13 @@ function getNestedExerciseLogs(log) {
     }
 
     for (const exerciseLog of muscleLog.exerciseLogs) {
+      if (!exerciseLog || (exerciseId && exerciseLog.exerciseId !== exerciseId)) {
+        continue;
+      }
+
       entries.push({
         ...exerciseLog,
-        muscleGroupId: exerciseLog.muscleGroupId ?? muscleLog.muscleGroupId,
+        muscleGroupId: exerciseLog.muscleGroupId ?? muscleLog.muscleGroupId ?? muscleLog.muscleGroup?.id,
       });
     }
   }
@@ -85,7 +91,12 @@ function getNestedExerciseLogs(log) {
 
 function getExerciseLogsForLog(log) {
   const rootLogs = getRootExerciseLogs(log);
-  return rootLogs.length ? rootLogs : getNestedExerciseLogs(log);
+  if (rootLogs.length) {
+    return rootLogs;
+  }
+
+  const nestedLogs = getNestedExerciseLogs(log);
+  return nestedLogs.length ? nestedLogs : collectExerciseLogEntries(log);
 }
 
 function getMuscleExerciseLogs(log, muscleGroupId, rootLogs) {
@@ -182,7 +193,8 @@ function collectExerciseHistory(data, exerciseId) {
       }
 
       const rootLogs = getExerciseLogsForLog(log);
-      const exerciseLog = rootLogs.find((entry) => entry?.exerciseId === exerciseId);
+      const exerciseLog = rootLogs.find((entry) => entry?.exerciseId === exerciseId) ??
+        (rootLogs === log.exerciseLogs ? getNestedExerciseLogs(log, exerciseId)[0] : null);
 
       if (!exerciseLog) {
         return null;
@@ -489,3 +501,4 @@ export function buildProgressionAdvice({ data, session, exerciseIndex, now = new
     type: "default",
   };
 }
+

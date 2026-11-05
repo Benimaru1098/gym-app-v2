@@ -68,7 +68,7 @@ function getWorkoutLogsForGroup(data, workoutGroup) {
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 }
 
-function collectExerciseLogEntries(value) {
+export function collectExerciseLogEntries(value) {
   const entries = [];
 
   function walk(item) {
@@ -385,7 +385,16 @@ function normalizeJournalSnapshotExercise(exercisesById, snapshotExercise, index
   };
 }
 
-function normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails) {
+export function getWorkoutLogExerciseKey(exerciseLog, groupId) {
+  if (exerciseLog.exerciseId) {
+    return JSON.stringify([exerciseLog.exerciseId]);
+  }
+
+  const name = exerciseLog.exerciseNameSnapshot ?? exerciseLog.exerciseName ?? exerciseLog.name;
+  return name ? JSON.stringify([null, exerciseLog.muscleGroupId ?? groupId ?? null, name]) : null;
+}
+
+function normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails, groupId) {
   const summary = {
     id: exerciseLog.exerciseId ?? `exercise-${index}`,
     hasStableId: Boolean(exerciseLog.exerciseId),
@@ -408,6 +417,7 @@ function normalizeJournalExercise(exercisesById, exerciseLog, index, includeDeta
 
   return {
     ...summary,
+    editKey: getWorkoutLogExerciseKey(exerciseLog, groupId),
     plannedExerciseId,
     plannedName: isReplacement ? plannedName ?? "Плановое упражнение" : null,
     isReplacement,
@@ -499,12 +509,13 @@ function buildJournalSections(lookup, log, includeDetails) {
   );
 
   for (const muscleLog of muscleGroupLogs) {
-    const section = ensureSection(muscleLog.muscleGroupId ?? muscleLog.muscleGroup?.id, muscleLog);
+    const groupId = muscleLog.muscleGroupId ?? muscleLog.muscleGroup?.id;
+    const section = ensureSection(groupId, muscleLog);
 
     if (Array.isArray(muscleLog.exerciseLogs)) {
       section.exercises.push(
         ...dedupeExerciseLogEntries(muscleLog.exerciseLogs).map((exerciseLog, index) =>
-          normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails),
+          normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails, groupId),
         ),
       );
     }

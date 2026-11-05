@@ -1,5 +1,5 @@
 import { AnimatePresence, LayoutGroup, motion, useDragControls, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   clearWorkoutLogs,
   deleteActiveWorkoutSessionsForWorkoutGroup,
@@ -9,13 +9,16 @@ import {
   deleteWorkoutLog,
   exportAppData,
   finishActiveWorkoutSession,
+  getImportDataCounts,
   importAppData,
+  ImportSelectionError,
   loadAppData,
   saveActiveWorkoutSession,
   saveExercise,
   saveExerciseTemplate,
   saveWorkoutGroup,
   saveWorkoutGroupSelectedTemplate,
+  saveWorkoutLogSets,
 } from "./data/storage.js";
 import { TRACKING_TYPES } from "./data/seed.js";
 import {
@@ -46,6 +49,7 @@ import {
 import { buildProgressionAdvice } from "./domain/progressionAdvice.js";
 import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
 import { icon } from "./ui/icons.js";
+import ModalDialog, { ConfirmationActions } from "./ui/ModalDialog.jsx";
 import editIconSrc from "./assets/icons/edit.svg";
 import "./styles.css";
 
@@ -83,10 +87,22 @@ const EXERCISE_TECHNIQUE_LONG_PRESS_MOVE_LIMIT = 10;
 const NOTICE_DURATION_MS = 2600;
 const MAX_VISIBLE_NOTICES = 3;
 const JOURNAL_PAGE_SIZE = 25;
-const BOTTOM_SHEET_OVERLAYS = {
+const IMPORT_OPTIONS = {
+  exercises: "База упражнений",
+  exerciseTemplates: "Шаблоны упражнений",
+  workoutGroups: "Тренировочные дни",
+  workoutLogs: "Завершённые тренировки",
+};
+const OVERLAYS = {
   activeExerciseReplacement: "activeExerciseReplacement",
+  confirmation: "confirmation",
   exerciseTechnique: "exerciseTechnique",
+  importData: "importData",
   templateSelector: "templateSelector",
+};
+const RESTART_WORKOUT_CONFIRMATION = {
+  title: "Начать новую тренировку?",
+  message: "Текущая незавершённая тренировка будет удалена.",
 };
 
 const screenMotionVariants = {
@@ -176,12 +192,14 @@ function createInitialState() {
     activeTab: "home",
     activeWorkoutSession: null,
     activeExerciseReplacement: null,
+    confirmation: null,
     data: null,
     error: null,
     exerciseDraft: { name: "", mediaUrl: "" },
     exerciseTechniqueViewer: null,
     freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     homeView: { name: "overview", workoutGroupId: null },
+    importDraft: null,
     isLoading: true,
     isStandalone:
       window.matchMedia?.("(display-mode: standalone)")?.matches ||
@@ -297,7 +315,9 @@ function applyHistoryEntry(current, entry) {
     ...current,
     activeTab,
     activeExerciseReplacement: null,
+    confirmation: null,
     exerciseTechniqueViewer: null,
+    importDraft: null,
     templateSelector: null,
   };
 
@@ -316,46 +336,56 @@ function applyHistoryEntry(current, entry) {
   return next;
 }
 
-function getOpenBottomSheetOverlay(state) {
+function getOpenOverlay(state) {
+  if (state.confirmation) {
+    return OVERLAYS.confirmation;
+  }
+
+  if (state.importDraft) {
+    return OVERLAYS.importData;
+  }
+
   if (state.exerciseTechniqueViewer) {
-    return BOTTOM_SHEET_OVERLAYS.exerciseTechnique;
+    return OVERLAYS.exerciseTechnique;
   }
 
   if (state.activeExerciseReplacement) {
-    return BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement;
+    return OVERLAYS.activeExerciseReplacement;
   }
 
   if (state.templateSelector) {
-    return BOTTOM_SHEET_OVERLAYS.templateSelector;
+    return OVERLAYS.templateSelector;
   }
 
   return null;
 }
 
-function closeBottomSheetState(state) {
+function closeOverlayState(state) {
   return {
     ...state,
     activeExerciseReplacement: null,
+    confirmation: null,
     exerciseTechniqueViewer: null,
+    importDraft: null,
     templateSelector: null,
   };
 }
 
-function createBottomSheetHistoryEntry(state, overlay) {
+function createOverlayHistoryEntry(state, overlay) {
   const entry = {
     ...createHistoryEntry(state),
     overlay,
   };
 
-  if (overlay === BOTTOM_SHEET_OVERLAYS.templateSelector) {
+  if (overlay === OVERLAYS.templateSelector) {
     entry.templateSelector = state.templateSelector;
   }
 
-  if (overlay === BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement) {
+  if (overlay === OVERLAYS.activeExerciseReplacement) {
     entry.activeExerciseReplacement = state.activeExerciseReplacement;
   }
 
-  if (overlay === BOTTOM_SHEET_OVERLAYS.exerciseTechnique) {
+  if (overlay === OVERLAYS.exerciseTechnique) {
     entry.exerciseTechniqueViewer = state.exerciseTechniqueViewer;
   }
 
@@ -515,14 +545,15 @@ function formatLastWorkoutLabel(dateValue) {
   return `Было: ${formatRelativeDate(dateValue)}`;
 }
 
+function formatWeightInput(weightKg) {
+  return String(weightKg ?? "").replace(/,/g, ".");
+}
+
 function formatWeightValue(weightKg) {
-  const weight = Number(weightKg);
+  const value = formatWeightInput(weightKg);
+  const weight = Number(value);
 
-  if (Number.isNaN(weight)) {
-    return String(weightKg);
-  }
-
-  return Number.isInteger(weight) ? String(weight) : String(weight).replace(".", ",");
+  return Number.isFinite(weight) ? String(weight) : value;
 }
 
 function formatLastSetsResult(lastSets) {
@@ -625,14 +656,14 @@ function formatSetList(sets) {
 }
 
 function normalizeWeightInput(value) {
-  const cleaned = String(value).replace(/[^\d,.]/g, "");
-  const separatorIndex = cleaned.search(/[,.]/);
+  const cleaned = formatWeightInput(value).replace(/[^\d.]/g, "");
+  const separatorIndex = cleaned.indexOf(".");
 
   if (separatorIndex === -1) {
     return cleaned;
   }
 
-  return `${cleaned.slice(0, separatorIndex + 1)}${cleaned.slice(separatorIndex + 1).replace(/[,.]/g, "")}`;
+  return `${cleaned.slice(0, separatorIndex + 1)}${cleaned.slice(separatorIndex + 1).replace(/\./g, "")}`;
 }
 
 function normalizeRepsInput(value) {
@@ -640,7 +671,7 @@ function normalizeRepsInput(value) {
 }
 
 function parseActiveWeightValue(value) {
-  const number = Number.parseFloat(String(value ?? "").replace(",", "."));
+  const number = Number.parseFloat(formatWeightInput(value));
   return Number.isFinite(number) ? number : null;
 }
 
@@ -1317,12 +1348,20 @@ function App() {
   const scrollPositionsRef = useRef(new Map());
   const templateDragRef = useRef(null);
   const activeWorkoutSaveQueueRef = useRef(Promise.resolve());
+  const confirmationRequestRef = useRef(null);
   const importFileInputRef = useRef(null);
+  const pendingImportFileRef = useRef(null);
   const screenAnimationModeRef = useRef("main");
   const shouldReduceMotion = useReducedMotion();
 
   useEffect(() => {
     stateRef.current = state;
+
+    const request = confirmationRequestRef.current;
+    if (request && !state.confirmation) {
+      confirmationRequestRef.current = null;
+      request.resolve(request.answer === true);
+    }
   }, [state]);
 
   const patchState = useCallback((patchOrUpdater) => {
@@ -1366,11 +1405,11 @@ function App() {
     [patchState],
   );
 
-  const pushBottomSheetHistory = useCallback((overlay) => {
-    window.history.pushState(createBottomSheetHistoryEntry(stateRef.current, overlay), "");
+  const pushOverlayHistory = useCallback((overlay) => {
+    window.history.pushState(createOverlayHistoryEntry(stateRef.current, overlay), "");
   }, []);
 
-  const closeBottomSheet = useCallback(
+  const closeOverlay = useCallback(
     (overlay, patch) => {
       if (window.history.state?.tag === HISTORY_TAG && window.history.state.overlay === overlay) {
         window.history.back();
@@ -1381,6 +1420,26 @@ function App() {
     },
     [patchState],
   );
+
+  const requestConfirmation = useCallback((confirmation) => {
+    if (confirmationRequestRef.current || getOpenOverlay(stateRef.current)) {
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      confirmationRequestRef.current = { resolve, answer: null };
+      patchState({ confirmation });
+      pushOverlayHistory(OVERLAYS.confirmation);
+    });
+  }, [patchState, pushOverlayHistory]);
+
+  const answerConfirmation = useCallback((answer) => {
+    const request = confirmationRequestRef.current;
+    if (request?.answer === null && stateRef.current.confirmation) {
+      request.answer = answer;
+      closeOverlay(OVERLAYS.confirmation, { confirmation: null });
+    }
+  }, [closeOverlay]);
 
   useEffect(() => {
     return () => {
@@ -1405,14 +1464,14 @@ function App() {
           mediaUrl,
         },
       });
-      pushBottomSheetHistory(BOTTOM_SHEET_OVERLAYS.exerciseTechnique);
+      pushOverlayHistory(OVERLAYS.exerciseTechnique);
     },
-    [patchState, pushBottomSheetHistory, showNotice],
+    [patchState, pushOverlayHistory, showNotice],
   );
 
   const closeExerciseTechnique = useCallback(() => {
-    closeBottomSheet(BOTTOM_SHEET_OVERLAYS.exerciseTechnique, { exerciseTechniqueViewer: null });
-  }, [closeBottomSheet]);
+    closeOverlay(OVERLAYS.exerciseTechnique, { exerciseTechniqueViewer: null });
+  }, [closeOverlay]);
 
   const refreshData = useCallback(async () => {
     const data = await loadAppData();
@@ -1517,11 +1576,16 @@ function App() {
 
       saveCurrentScrollPosition();
 
-      const openOverlay = getOpenBottomSheetOverlay(stateRef.current);
+      const openOverlay = getOpenOverlay(stateRef.current);
 
       if (openOverlay && !entry.overlay) {
         const current = stateRef.current;
-        const next = closeBottomSheetState(current);
+        if (current.importDraft?.status === "importing") {
+          pushOverlayHistory(openOverlay);
+          return;
+        }
+
+        const next = closeOverlayState(current);
         screenAnimationModeRef.current = getScreenAnimationMode(current, next);
         stateRef.current = next;
         setState(next);
@@ -1557,7 +1621,7 @@ function App() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [restoreScrollPosition, saveCurrentScrollPosition, writeHistoryState]);
+  }, [pushOverlayHistory, restoreScrollPosition, saveCurrentScrollPosition, writeHistoryState]);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event) => {
@@ -1840,9 +1904,10 @@ function App() {
         JSON.stringify(existingWorkoutGroup.muscleGroupIds ?? []) !== JSON.stringify(selectedMuscleGroupIds);
 
       if (hasActiveWorkout && muscleGroupOrderChanged) {
-        const shouldReplaceActiveWorkout = window.confirm(
-          "Есть незавершённая тренировка. При изменении групп мышц она будет удалена. Продолжить?",
-        );
+        const shouldReplaceActiveWorkout = await requestConfirmation({
+          title: "Изменить группы мышц?",
+          message: "При сохранении тренировочного дня незавершённая тренировка будет удалена.",
+        });
 
         if (!shouldReplaceActiveWorkout) {
           return;
@@ -1899,7 +1964,7 @@ function App() {
         showNotice("Не удалось сохранить тренировочный день", "error");
       }
     },
-    [navigate, refreshData, showNotice],
+    [navigate, refreshData, requestConfirmation, showNotice],
   );
 
   const handleDeleteTrainingDay = useCallback(async () => {
@@ -1913,11 +1978,14 @@ function App() {
     const hasActiveWorkout = current.data.activeWorkoutSessions.some(
       (session) => session.workoutGroupId === trainingDayId,
     );
-    const confirmationMessage = hasActiveWorkout
-      ? "Есть незавершённая тренировка. При удалении тренировочного дня она тоже будет удалена. Продолжить?"
-      : "Удалить тренировочный день?";
+    const confirmed = await requestConfirmation({
+      title: "Удалить тренировочный день?",
+      message: hasActiveWorkout
+        ? "Тренировочный день исчезнет с главной. Его незавершённая тренировка тоже будет удалена."
+        : "Тренировочный день исчезнет с главной.",
+    });
 
-    if (!window.confirm(confirmationMessage)) {
+    if (!confirmed) {
       return;
     }
 
@@ -1948,7 +2016,7 @@ function App() {
       console.error(error);
       showNotice("Не удалось удалить тренировочный день", "error");
     }
-  }, [navigate, refreshData, showNotice]);
+  }, [navigate, refreshData, requestConfirmation, showNotice]);
 
   const openTemplateGroup = useCallback(
     (muscleGroupId) => {
@@ -2039,12 +2107,12 @@ function App() {
 
   const openTemplateSelector = useCallback((muscleGroupId, workoutGroupId) => {
     patchState({ templateSelector: { muscleGroupId, workoutGroupId } });
-    pushBottomSheetHistory(BOTTOM_SHEET_OVERLAYS.templateSelector);
-  }, [patchState, pushBottomSheetHistory]);
+    pushOverlayHistory(OVERLAYS.templateSelector);
+  }, [patchState, pushOverlayHistory]);
 
   const closeTemplateSelector = useCallback(() => {
-    closeBottomSheet(BOTTOM_SHEET_OVERLAYS.templateSelector, { templateSelector: null });
-  }, [closeBottomSheet]);
+    closeOverlay(OVERLAYS.templateSelector, { templateSelector: null });
+  }, [closeOverlay]);
 
   const selectWorkoutTemplate = useCallback(
     async (templateId) => {
@@ -2057,13 +2125,13 @@ function App() {
       try {
         await saveWorkoutGroupSelectedTemplate(selector.workoutGroupId, selector.muscleGroupId, templateId);
         await refreshData();
-        closeBottomSheet(BOTTOM_SHEET_OVERLAYS.templateSelector, { templateSelector: null });
+        closeOverlay(OVERLAYS.templateSelector, { templateSelector: null });
       } catch (error) {
         console.error(error);
         showNotice("Не удалось выбрать шаблон", "error");
       }
     },
-    [closeBottomSheet, refreshData, showNotice],
+    [closeOverlay, refreshData, showNotice],
   );
 
   const persistActiveWorkoutSession = useCallback(
@@ -2121,7 +2189,7 @@ function App() {
       const current = stateRef.current;
       const unfinishedSession = getActiveWorkoutSessionForGroup(current, workoutGroupId);
 
-      if (unfinishedSession && !window.confirm("Начать новую тренировку? Прошлая незавершённая тренировка будет удалена.")) {
+      if (unfinishedSession && !(await requestConfirmation(RESTART_WORKOUT_CONFIRMATION))) {
         return;
       }
 
@@ -2167,7 +2235,7 @@ function App() {
         showNotice("Не удалось начать тренировку", "error");
       }
     },
-    [navigate, refreshData, showNotice],
+    [navigate, refreshData, requestConfirmation, showNotice],
   );
 
   const handleStartFreeWorkout = useCallback(
@@ -2182,7 +2250,7 @@ function App() {
 
       const unfinishedSession = getActiveWorkoutSessionForGroup(current, FREE_WORKOUT_GROUP_ID);
 
-      if (unfinishedSession && !window.confirm("Начать новую тренировку? Прошлая незавершённая тренировка будет удалена.")) {
+      if (unfinishedSession && !(await requestConfirmation(RESTART_WORKOUT_CONFIRMATION))) {
         return;
       }
 
@@ -2223,7 +2291,7 @@ function App() {
         showNotice("Не удалось начать тренировку", "error");
       }
     },
-    [navigate, refreshData, showNotice],
+    [navigate, refreshData, requestConfirmation, showNotice],
   );
 
   const handleContinueWorkout = useCallback(
@@ -2345,12 +2413,12 @@ function App() {
 
   const openExerciseReplacement = useCallback((exerciseIndex) => {
     patchState({ activeExerciseReplacement: { exerciseIndex } });
-    pushBottomSheetHistory(BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement);
-  }, [patchState, pushBottomSheetHistory]);
+    pushOverlayHistory(OVERLAYS.activeExerciseReplacement);
+  }, [patchState, pushOverlayHistory]);
 
   const closeExerciseReplacement = useCallback(() => {
-    closeBottomSheet(BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement, { activeExerciseReplacement: null });
-  }, [closeBottomSheet]);
+    closeOverlay(OVERLAYS.activeExerciseReplacement, { activeExerciseReplacement: null });
+  }, [closeOverlay]);
 
   const selectReplacementExercise = useCallback(
     (exerciseId) => {
@@ -2417,9 +2485,9 @@ function App() {
         }),
       }), { showError: true });
 
-      closeBottomSheet(BOTTOM_SHEET_OVERLAYS.activeExerciseReplacement, { activeExerciseReplacement: null });
+      closeOverlay(OVERLAYS.activeExerciseReplacement, { activeExerciseReplacement: null });
     },
-    [closeBottomSheet, showNotice, updateActiveWorkoutSession],
+    [closeOverlay, showNotice, updateActiveWorkoutSession],
   );
 
   const handleActivePreviousExercise = useCallback(async () => {
@@ -2754,7 +2822,12 @@ function App() {
       return;
     }
 
-    if (!window.confirm("Удалить шаблон?")) {
+    const confirmed = await requestConfirmation({
+      title: "Удалить шаблон?",
+      message: `Шаблон «${details.template.name}» исчезнет из списка.`,
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -2767,7 +2840,7 @@ function App() {
       console.error(error);
       showNotice("Не удалось удалить шаблон", "error");
     }
-  }, [goBack, refreshData, showNotice]);
+  }, [goBack, refreshData, requestConfirmation, showNotice]);
 
   const handleExerciseNameChange = useCallback((event) => {
     const value = event.target.value;
@@ -2829,7 +2902,12 @@ function App() {
       return;
     }
 
-    if (!window.confirm("Удалить упражнение?")) {
+    const confirmed = await requestConfirmation({
+      title: "Удалить упражнение?",
+      message: `Упражнение «${details.exercise.name}» исчезнет из базы и действующих шаблонов.`,
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -2842,7 +2920,7 @@ function App() {
       console.error(error);
       showNotice("Не удалось удалить упражнение", "error");
     }
-  }, [goBack, refreshData, showNotice]);
+  }, [goBack, refreshData, requestConfirmation, showNotice]);
 
   const handleExportData = useCallback(async () => {
     try {
@@ -2866,6 +2944,13 @@ function App() {
     importFileInputRef.current?.click();
   }, []);
 
+  const closeImportOptions = useCallback(() => {
+    const draft = stateRef.current.importDraft;
+    if (draft && draft.status !== "importing") {
+      closeOverlay(OVERLAYS.importData, { importDraft: null });
+    }
+  }, [closeOverlay]);
+
   const handleImportFileChange = useCallback(
     async (event) => {
       const file = event.target.files?.[0];
@@ -2875,57 +2960,94 @@ function App() {
         return;
       }
 
-      if (
-        !window.confirm(
-          "Импорт заменит текущие данные приложения данными из файла. Незавершённые тренировки не переносятся. Продолжить?",
-        )
-      ) {
+      pendingImportFileRef.current = file;
+
+      try {
+        const payload = JSON.parse(await file.text());
+        const counts = getImportDataCounts(payload);
+        const { activeTab, homeView } = stateRef.current;
+
+        if (
+          pendingImportFileRef.current === file && activeTab === "home" && homeView.name === "settings" &&
+          !getOpenOverlay(stateRef.current)
+        ) {
+          patchState({ importDraft: { id: createId("import"), payload, counts, status: "ready", error: "" } });
+          pushOverlayHistory(OVERLAYS.importData);
+        }
+      } catch (error) {
+        console.error(error);
+        if (pendingImportFileRef.current === file) {
+          showNotice("Не удалось прочитать файл импорта. Выберите JSON-файл, созданный при экспорте.", "error");
+        }
+      } finally {
+        if (pendingImportFileRef.current === file) {
+          pendingImportFileRef.current = null;
+        }
+      }
+    },
+    [patchState, pushOverlayHistory, showNotice],
+  );
+
+  const handleConfirmImport = useCallback(
+    async (selectedStores) => {
+      const draft = stateRef.current.importDraft;
+      if (draft?.status !== "ready" || !selectedStores.length) {
         return;
       }
+
+      patchState({ importDraft: { ...draft, status: "importing", error: "" } });
 
       try {
         await activeWorkoutSaveQueueRef.current.catch(() => {});
 
-        const payload = JSON.parse(await file.text());
-        await importAppData(payload);
+        await importAppData(draft.payload, { selectedStores });
         activeWorkoutSaveQueueRef.current = Promise.resolve();
         const data = await loadAppData();
 
         scrollPositionsRef.current.clear();
-        navigate(
-          {
-            activeTab: "home",
-            activeWorkoutSession: null,
-            activeExerciseReplacement: null,
-            data,
-            error: null,
-            exerciseDraft: { name: "", mediaUrl: "" },
-            exerciseTechniqueViewer: null,
-            freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
-            homeView: { name: "settings", workoutGroupId: null },
-            isLoading: false,
-            journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
-            journalView: { name: "overview", workoutLogId: null },
-            journalVisibleCount: JOURNAL_PAGE_SIZE,
-            notices: [],
-            planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
-            templateDraft: { name: "", selectedExerciseIds: [] },
-            templateSelector: null,
-            trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
-          },
-          { history: "replace", scroll: "top" },
-        );
+        patchState({
+          activeTab: "home",
+          activeWorkoutSession: null,
+          activeExerciseReplacement: null,
+          data,
+          error: null,
+          exerciseDraft: { name: "", mediaUrl: "" },
+          exerciseTechniqueViewer: null,
+          freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
+          homeView: { name: "settings", workoutGroupId: null },
+          importDraft: { ...draft, status: "done" },
+          isLoading: false,
+          journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
+          journalView: { name: "overview", workoutLogId: null },
+          journalVisibleCount: JOURNAL_PAGE_SIZE,
+          notices: [],
+          planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
+          templateDraft: { name: "", selectedExerciseIds: [] },
+          templateSelector: null,
+          trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
+        });
+        closeImportOptions();
         showNotice("Данные импортированы");
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось импортировать данные", "error");
+        patchState({
+          importDraft: {
+            ...draft,
+            error: error instanceof ImportSelectionError ? error.message : "Не удалось импортировать данные из файла.",
+          },
+        });
       }
     },
-    [navigate, showNotice],
+    [closeImportOptions, patchState, showNotice],
   );
 
   const handleClearWorkouts = useCallback(async () => {
-    if (!window.confirm("Очистить все завершённые тренировки?")) {
+    const confirmed = await requestConfirmation({
+      title: "Очистить журнал?",
+      message: "Все завершённые тренировки будут удалены.",
+    });
+
+    if (!confirmed) {
       return;
     }
 
@@ -2937,7 +3059,40 @@ function App() {
       console.error(error);
       showNotice("Не удалось очистить тренировки", "error");
     }
-  }, [refreshData, showNotice]);
+  }, [refreshData, requestConfirmation, showNotice]);
+
+  const handleSaveWorkoutLogSets = useCallback(async (originalLog, changes) => {
+    try {
+      const result = await saveWorkoutLogSets(originalLog, changes);
+
+      if (result.status === "invalid") {
+        showNotice("Проверь вес и повторы. Вес может быть дробным, повторы должны быть целым числом.", "error");
+        return false;
+      }
+
+      patchState((current) => ({
+        data: {
+          ...current.data,
+          workoutLogs: current.data.workoutLogs.flatMap((log) =>
+            log.id === originalLog.id ? (result.workoutLog ? [result.workoutLog] : []) : [log],
+          ),
+        },
+      }));
+
+      if (result.status === "changed") {
+        showNotice("Запись уже изменилась. Открыта актуальная версия.", "error");
+      } else if (result.status === "missing") {
+        showNotice("Запись уже удалена", "error");
+      } else {
+        showNotice("Изменения сохранены");
+      }
+      return true;
+    } catch (error) {
+      console.error(error);
+      showNotice("Не удалось сохранить изменения", "error");
+      return false;
+    }
+  }, [patchState, showNotice]);
 
   const handleDeleteWorkoutLog = useCallback(
     async (workoutLogId) => {
@@ -2945,7 +3100,12 @@ function App() {
         return;
       }
 
-      if (!window.confirm("Удалить эту тренировку из журнала?")) {
+      const confirmed = await requestConfirmation({
+        title: "Удалить тренировку из журнала?",
+        message: "Запись о тренировке и все её подходы будут удалены.",
+      });
+
+      if (!confirmed) {
         return;
       }
 
@@ -2965,7 +3125,7 @@ function App() {
         showNotice("Не удалось удалить тренировку", "error");
       }
     },
-    [navigate, refreshData, showNotice],
+    [navigate, refreshData, requestConfirmation, showNotice],
   );
 
   const activeView = useMemo(() => {
@@ -3090,6 +3250,7 @@ function App() {
             workoutLogId={state.journalView.workoutLogId}
             onBack={goBack}
             onDelete={handleDeleteWorkoutLog}
+            onSave={handleSaveWorkoutLogSets}
           />
         );
       } else {
@@ -3139,6 +3300,7 @@ function App() {
     handleDeleteTemplate,
     handleDeleteTrainingDay,
     handleDeleteWorkoutLog,
+    handleSaveWorkoutLogSets,
     handleExerciseNameChange,
     handleExerciseMediaUrlChange,
     handleExportData,
@@ -3213,6 +3375,32 @@ function App() {
       />
 
       <Notice notices={state.notices} />
+
+      <AnimatePresence mode="wait">
+        {state.confirmation ? (
+          <ModalDialog
+            key="confirmation"
+            title={state.confirmation.title}
+            onClose={() => answerConfirmation(false)}
+            actions={(
+              <ConfirmationActions
+                danger
+                onCancel={() => answerConfirmation(false)}
+                onConfirm={() => answerConfirmation(true)}
+              />
+            )}
+          >
+            <p className="confirmation-message">{state.confirmation.message}</p>
+          </ModalDialog>
+        ) : state.importDraft ? (
+          <ImportOptionsDialog
+            key={state.importDraft.id}
+            draft={state.importDraft}
+            onClose={closeImportOptions}
+            onImport={handleConfirmImport}
+          />
+        ) : null}
+      </AnimatePresence>
 
       <AnimatePresence>
         {state.templateSelector ? (
@@ -3541,8 +3729,8 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
               устройство. Незавершённая тренировка не сохраняется.
             </p>
             <p>
-              <strong>Импорт данных</strong> загружает ранее сохранённые данные из файла и заменяет ими
-              текущие данные приложения. Незавершённая тренировка будет удалена.
+              <strong>Импорт данных</strong> заменяет выбранные разделы данными из файла.
+              Незавершённые тренировки будут удалены.
             </p>
             <p>
               <strong>Очистить тренировки</strong> удаляет всю историю тренировок в журнале.
@@ -4113,6 +4301,9 @@ function ActiveWorkoutScreen({
       )
     : 0;
   const currentExerciseId = session?.exerciseLogs?.[currentIndex]?.exerciseId ?? null;
+  const previousSets = useMemo(() => (
+    currentExerciseId ? getLastSetsForExercise(data, currentExerciseId) : []
+  ), [data, currentExerciseId]);
   const exerciseMotionStateRef = useRef({ index: currentIndex, sessionId: session?.id ?? null });
   const setTimePopoverRef = useRef(null);
   const [visibleSetTimeIndex, setVisibleSetTimeIndex] = useState(null);
@@ -4190,7 +4381,7 @@ function ActiveWorkoutScreen({
     name: exerciseLog.exerciseNameSnapshot,
     mediaUrl: exerciseMediaUrl,
   };
-  const previousSetsLabel = formatSetList(exerciseLog.previousSets);
+  const previousSetsLabel = formatSetList(previousSets);
   const progressionAdvice = buildProgressionAdvice({
     data,
     session,
@@ -4312,7 +4503,7 @@ function ActiveWorkoutScreen({
                   <input
                     type="text"
                     inputMode="decimal"
-                    value={set.weightKg ?? ""}
+                    value={formatWeightInput(set.weightKg)}
                     placeholder="0"
                     aria-label={`Вес в подходе ${index + 1}`}
                     onChange={(event) => onSetChange(currentIndex, index, "weightKg", event.target.value)}
@@ -5253,13 +5444,56 @@ function JournalCardHeader({ date, title, showChevron = false }) {
   );
 }
 
-function JournalSetList({ sets }) {
+function JournalSetInput({ value, placeholder, inputMode, label, onChange }) {
+  const hint = placeholder || "—";
+
+  return (
+    <span className="journal-set-input" data-value={value || hint}>
+      <input
+        type="text"
+        inputMode={inputMode}
+        value={value}
+        placeholder={hint}
+        aria-label={label}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </span>
+  );
+}
+
+function JournalSetList({ sets, exerciseName, onChangeValue, onRemoveSet }) {
   return (
     <ol className="journal-set-list">
       {sets.map((set, index) => (
-        <li key={index}>
+        <li key={set.rowId ?? index}>
           <span>{set.setNumber ?? index + 1} подход</span>
-          <strong>{formatWorkoutSet(set)}</strong>
+          {onChangeValue ? (
+            <>
+              <strong>
+                <JournalSetInput
+                  value={set.enteredValues?.weightKg ?? ""}
+                  placeholder={formatWeightInput(set.weightKg)}
+                  inputMode="decimal"
+                  label={`Вес в подходе ${index + 1}: ${exerciseName}`}
+                  onChange={(value) => onChangeValue(index, "weightKg", value)}
+                />
+                {" кг × "}
+                <JournalSetInput
+                  value={set.enteredValues?.reps ?? ""}
+                  placeholder={String(set.reps ?? "")}
+                  inputMode="numeric"
+                  label={`Повторы в подходе ${index + 1}: ${exerciseName}`}
+                  onChange={(value) => onChangeValue(index, "reps", value)}
+                />
+              </strong>
+              <button
+                className="active-set-remove-button journal-set-remove-button"
+                type="button"
+                aria-label={`Удалить подход ${index + 1}: ${exerciseName}`}
+                onClick={() => onRemoveSet(index)}
+              />
+            </>
+          ) : <strong>{formatWorkoutSet(set)}</strong>}
         </li>
       ))}
     </ol>
@@ -5575,8 +5809,53 @@ function JournalFilterScreen({
   );
 }
 
-function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete }) {
-  const details = buildJournalWorkoutDetails(data, workoutLogId);
+function JournalSetEditor({ sets, exerciseName, onChange, disabled }) {
+  function changeValue(index, field, value) {
+    const isWeight = field === "weightKg";
+    const pattern = isWeight ? /^\d*(?:[.,]\d*)?$/ : /^\d*$/;
+    if (!pattern.test(value)) {
+      return;
+    }
+
+    const enteredValue = isWeight ? formatWeightInput(value) : value;
+    onChange((rows) => rows.map((set, position) => position === index ? {
+      ...set,
+      enteredValues: { ...set.enteredValues, [field]: enteredValue },
+    } : set));
+  }
+
+  function addSet() {
+    const row = { rowId: createId("journal-set"), weightKg: "", reps: "" };
+    onChange((rows) => renumberSetRows([...rows, row]));
+  }
+
+  function removeSet(index) {
+    onChange((rows) => renumberSetRows(rows.filter((_, position) => position !== index)));
+  }
+
+  return (
+    <fieldset className="journal-set-editor" disabled={disabled} aria-label={`Подходы: ${exerciseName}`}>
+      {sets.length ? (
+        <JournalSetList
+          sets={sets}
+          exerciseName={exerciseName}
+          onChangeValue={changeValue}
+          onRemoveSet={removeSet}
+        />
+      ) : <p className="journal-empty-sets">Подходы не выполнены</p>}
+      <button className="action-button secondary-action" type="button" onClick={addSet}>
+        Добавить подход
+      </button>
+    </fieldset>
+  );
+}
+
+function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave }) {
+  const [draft, setDraft] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const savingRef = useRef(false);
+  const currentDetails = useMemo(() => buildJournalWorkoutDetails(data, workoutLogId), [data, workoutLogId]);
+  const details = draft?.details ?? currentDetails;
 
   if (!details) {
     return (
@@ -5587,6 +5866,54 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete }) {
         </div>
       </section>
     );
+  }
+
+  const canEdit = details.sections.some((section) => section.exercises.some((exercise) => exercise.editKey));
+
+  function startEditing() {
+    const originalLog = data.workoutLogs.find((log) => log.id === workoutLogId);
+    setDraft({ details, originalLog, changes: new Map() });
+  }
+
+  function updateExerciseSets(exercise, update) {
+    if (savingRef.current) {
+      return;
+    }
+
+    setDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const changes = new Map(current.changes);
+      const rows = changes.get(exercise.editKey) ?? exercise.sets.map((set, index) => ({ ...set, rowId: index }));
+      changes.set(exercise.editKey, update(rows));
+      return { ...current, changes };
+    });
+  }
+
+  async function saveChanges() {
+    if (savingRef.current || !draft?.changes.size) {
+      return;
+    }
+
+    savingRef.current = true;
+    setIsSaving(true);
+    try {
+      const changes = new Map([...draft.changes].map(([key, sets]) => [
+        key,
+        sets.map((set) => ({
+          weightKg: set.enteredValues?.weightKg || set.weightKg,
+          reps: set.enteredValues?.reps || set.reps,
+        })),
+      ]));
+      if (await onSave(draft.originalLog, changes)) {
+        setDraft(null);
+      }
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -5620,7 +5947,14 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete }) {
                   ) : null}
                 </h2>
 
-                {exercise.sets.length ? (
+                {draft && exercise.editKey ? (
+                  <JournalSetEditor
+                    sets={draft.changes.get(exercise.editKey) ?? exercise.sets}
+                    exerciseName={exercise.name}
+                    disabled={isSaving}
+                    onChange={(update) => updateExerciseSets(exercise, update)}
+                  />
+                ) : exercise.sets.length ? (
                   <JournalSetList sets={exercise.sets} />
                 ) : (
                   <p className="journal-empty-sets">Подходы не выполнены</p>
@@ -5632,13 +5966,27 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete }) {
       ))}
 
       <div className="journal-detail-actions">
-        <button
-          className="action-button danger-action"
-          type="button"
-          onClick={() => onDelete(details.id)}
-        >
-          <span>Удалить тренировку</span>
-        </button>
+        {draft ? (
+          <>
+            <button className="action-button" type="button" onClick={saveChanges} disabled={isSaving || !draft.changes.size}>
+              {isSaving ? "Сохраняю…" : "Сохранить"}
+            </button>
+            <button className="action-button secondary-action" type="button" onClick={() => setDraft(null)} disabled={isSaving}>
+              Отмена
+            </button>
+          </>
+        ) : (
+          <>
+            {canEdit ? (
+              <button className="action-button secondary-action" type="button" onClick={startEditing}>
+                Редактировать тренировку
+              </button>
+            ) : null}
+            <button className="action-button danger-action" type="button" onClick={() => onDelete(details.id)}>
+              Удалить тренировку
+            </button>
+          </>
+        )}
       </div>
     </section>
   );
@@ -5738,6 +6086,79 @@ function BottomSheet({ ariaLabel, backdropLabel, className = "", onClose, childr
         {children}
       </motion.section>
     </motion.div>
+  );
+}
+
+function ImportOptionsDialog({ draft, onClose, onImport }) {
+  const formId = useId();
+  const [selectedStores, setSelectedStores] = useState(() => Object.keys(IMPORT_OPTIONS));
+  const shouldReduceMotion = useReducedMotion();
+  const isBusy = draft.status !== "ready";
+
+  function toggleStore(storeName) {
+    setSelectedStores((current) => current.includes(storeName)
+      ? current.filter((name) => name !== storeName)
+      : [...current, storeName]);
+  }
+
+  return (
+    <ModalDialog
+      title="Что импортировать?"
+      onClose={onClose}
+      actions={(
+        <ConfirmationActions
+          onCancel={onClose}
+          form={formId}
+          isBusy={isBusy}
+          confirmDisabled={!selectedStores.length}
+        />
+      )}
+    >
+      <form
+        id={formId}
+        className="import-form"
+        aria-busy={isBusy}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onImport(selectedStores);
+        }}
+      >
+        <p>Отмеченные разделы будут заменены данными из файла. Незавершённые тренировки будут удалены.</p>
+        {draft.error ? <p className="import-error" role="alert">{draft.error}</p> : null}
+        <fieldset className="import-options" disabled={isBusy} aria-label="Разделы для импорта">
+          {Object.entries(IMPORT_OPTIONS).map(([storeName, label]) => {
+            const isSelected = selectedStores.includes(storeName);
+
+            return (
+              <label className="plan-row import-option" key={storeName}>
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleStore(storeName)}
+                />
+                <span className="import-checkbox" aria-hidden="true">
+                  <AnimatePresence initial={false}>
+                    {isSelected ? (
+                      <motion.span
+                        className="import-checkbox-mark"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: shouldReduceMotion ? 0 : 0.14 }}
+                      >
+                        <SvgIcon name="check" />
+                      </motion.span>
+                    ) : null}
+                  </AnimatePresence>
+                </span>
+                <span>{label}</span>
+                <span className="import-option-count">{draft.counts[storeName]}</span>
+              </label>
+            );
+          })}
+        </fieldset>
+      </form>
+    </ModalDialog>
   );
 }
 

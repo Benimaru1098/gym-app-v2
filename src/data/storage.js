@@ -1,3 +1,4 @@
+import { collectExerciseLogEntries, getWorkoutLogExerciseKey } from "../domain/selectors.js";
 import {
   STANDARD_TEMPLATE_NAME,
   getStandardTemplateId,
@@ -21,8 +22,7 @@ const STORE_NAMES = [
 const EXPORT_APP_ID = "gym-app";
 const EXPORT_FORMAT = "gym-app-data-export";
 const EXPORT_VERSION = 1;
-const TRANSFER_STORE_NAMES = [
-  "muscleGroups",
+const IMPORT_STORE_NAMES = [
   "exercises",
   "exerciseTemplates",
   "workoutGroups",
@@ -145,9 +145,7 @@ function haveDifferentTemplateData(firstTemplate, secondTemplate) {
   return JSON.stringify(firstTemplate) !== JSON.stringify(secondTemplate);
 }
 
-async function ensureSystemTemplates(database) {
-  const templates = await readStore(database, "exerciseTemplates");
-  const metadata = await readMetadata(database);
+function withSystemTemplates(templates) {
   const templatesById = new Map(templates.map((template) => [template.id, template]));
 
   for (const standardTemplate of getInitialStandardTemplates()) {
@@ -166,7 +164,13 @@ async function ensureSystemTemplates(database) {
     );
   }
 
-  const normalizedTemplates = [...templatesById.values()].map(normalizeExerciseTemplate);
+  return [...templatesById.values()].map(normalizeExerciseTemplate);
+}
+
+async function ensureSystemTemplates(database) {
+  const templates = await readStore(database, "exerciseTemplates");
+  const metadata = await readMetadata(database);
+  const normalizedTemplates = withSystemTemplates(templates);
 
   const existingTemplatesById = new Map(templates.map((template) => [template.id, template]));
   const hasChanges =
@@ -327,10 +331,17 @@ function getImportDataPayload(payload) {
     typeof payload.data === "object" &&
     !Array.isArray(payload.data)
   ) {
-    return payload.data;
+    if (IMPORT_STORE_NAMES.every((storeName) => Array.isArray(payload.data[storeName]))) {
+      return payload.data;
+    }
   }
 
   throw new Error("Unsupported import file");
+}
+
+export function getImportDataCounts(payload) {
+  const source = getImportDataPayload(payload);
+  return Object.fromEntries(IMPORT_STORE_NAMES.map((storeName) => [storeName, source[storeName].length]));
 }
 
 function normalizeImportedRecord(record, storeName) {
@@ -345,70 +356,150 @@ function normalizeImportedRecord(record, storeName) {
   return cloneJsonValue(record);
 }
 
-function normalizeImportedData(payload) {
-  const source = getImportDataPayload(payload);
-  const normalizedData = {};
+const importNormalizers = {
+  exercises: normalizeExercise,
+  exerciseTemplates: normalizeExerciseTemplate,
+  workoutGroups: normalizeWorkoutGroup,
+};
 
-  for (const storeName of TRANSFER_STORE_NAMES) {
-    if (!Array.isArray(source[storeName])) {
-      throw new Error(`Missing ${storeName}`);
-    }
+export class ImportSelectionError extends Error {}
 
-    normalizedData[storeName] = source[storeName].map((record) =>
-      normalizeImportedRecord(record, storeName),
-    );
+function validateImportSelection(data, selected) {
+  const muscleGroupIds = new Set(data.muscleGroups.map((group) => group.id));
+
+  if (selected.has("exercises") && data.exercises.some(
+    (exercise) => !exercise.isArchived && !muscleGroupIds.has(exercise.muscleGroupId),
+  )) {
+    throw new ImportSelectionError("В базе из файла есть упражнения для неизвестных групп мышц.");
   }
 
-  normalizedData.exercises = normalizedData.exercises.map(normalizeExercise);
-  normalizedData.exerciseTemplates = normalizedData.exerciseTemplates.map(normalizeExerciseTemplate);
-  normalizedData.workoutGroups = normalizedData.workoutGroups.map(normalizeWorkoutGroup);
+  if (selected.has("exerciseTemplates") && data.exerciseTemplates.some(
+    (template) => !template.isArchived &&
+      template.id !== getStandardTemplateId(template.muscleGroupId) &&
+      !muscleGroupIds.has(template.muscleGroupId),
+  )) {
+    throw new ImportSelectionError("В файле есть шаблоны для неизвестных групп мышц.");
+  }
 
-  return {
-    metadata:
-      source.metadata && typeof source.metadata === "object" && !Array.isArray(source.metadata)
-        ? cloneJsonValue(source.metadata)
-        : null,
-    ...normalizedData,
-  };
+  if (selected.has("workoutGroups") && data.workoutGroups.some(
+    (group) => group.muscleGroupIds.some((id) => !muscleGroupIds.has(id)),
+  )) {
+    throw new ImportSelectionError("В файле есть тренировочные дни с неизвестными группами мышц.");
+  }
+
+  if (selected.has("exercises") !== selected.has("exerciseTemplates")) {
+    const exercisesById = new Map(data.exercises.map((exercise) => [exercise.id, exercise]));
+    const hasUnavailableExercises = data.exerciseTemplates.some((template) =>
+      !template.isArchived && template.exerciseIds?.some((id) => {
+        const exercise = exercisesById.get(id);
+        return !exercise || exercise.isArchived || exercise.muscleGroupId !== template.muscleGroupId;
+      }),
+    );
+
+    if (hasUnavailableExercises) {
+      throw new ImportSelectionError("В шаблонах есть упражнения, которых нет в выбранной базе. Отметьте базу упражнений и шаблоны вместе.");
+    }
+  }
 }
 
-export async function importAppData(payload) {
-  const importedData = normalizeImportedData(payload);
+function countWorkoutLogUsage(logs, getIds) {
+  const counts = new Map();
+
+  for (const log of logs) {
+    for (const id of getIds(log)) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+
+  return counts;
+}
+
+export async function importAppData(payload, { selectedStores = IMPORT_STORE_NAMES } = {}) {
+  const source = getImportDataPayload(payload);
+  const selected = new Set(selectedStores);
+  const importedStores = IMPORT_STORE_NAMES.filter((storeName) => selected.has(storeName));
+
+  if (!importedStores.length || importedStores.length !== selected.size) {
+    throw new ImportSelectionError("Выберите хотя бы один раздел для импорта.");
+  }
+
+  const isFullImport = importedStores.length === IMPORT_STORE_NAMES.length;
+  const importedData = Object.fromEntries(importedStores.map((storeName) => [
+    storeName,
+    source[storeName].map((record) => {
+      const normalized = normalizeImportedRecord(record, storeName);
+      return importNormalizers[storeName]?.(normalized) ?? normalized;
+    }),
+  ]));
   const database = await openAppDatabase();
 
   try {
-    const now = new Date().toISOString();
-    const metadata = {
-      ...(importedData.metadata ?? {}),
-      id: "app",
-      schemaVersion: SCHEMA_VERSION,
-      createdAt: importedData.metadata?.createdAt ?? now,
-      updatedAt: now,
-      importedAt: now,
-    };
     const transaction = database.transaction(STORE_NAMES, "readwrite");
     const done = transactionDone(transaction);
 
-    for (const storeName of STORE_NAMES) {
-      transaction.objectStore(storeName).clear();
-    }
+    try {
+      const data = { ...importedData };
+      const metadataStore = transaction.objectStore("metadata");
+      const [metadata, muscleGroups] = await Promise.all([
+        isFullImport ? source.metadata : requestToPromise(metadataStore.get("app")),
+        requestToPromise(transaction.objectStore("muscleGroups").getAll()),
+        ...IMPORT_STORE_NAMES.filter((storeName) => !selected.has(storeName)).map(async (storeName) => {
+          data[storeName] = await requestToPromise(transaction.objectStore(storeName).getAll());
+        }),
+      ]);
+      data.muscleGroups = muscleGroups;
 
-    transaction.objectStore("metadata").put(metadata);
-
-    for (const storeName of TRANSFER_STORE_NAMES) {
-      const store = transaction.objectStore(storeName);
-
-      for (const record of importedData[storeName]) {
-        store.put(record);
+      if (selected.has("exerciseTemplates")) {
+        data.exerciseTemplates = withSystemTemplates(data.exerciseTemplates);
       }
-    }
+      validateImportSelection(data, selected);
 
-    await done;
-    await ensureSystemTemplates(database);
+      const storesToWrite = new Set(importedStores);
+
+      if (!isFullImport) {
+        for (const [storeName, getIds] of [
+          ["exercises", getWorkoutLogExerciseIds],
+          ["exerciseTemplates", getWorkoutLogTemplateIds],
+        ]) {
+          if (selected.has(storeName) || selected.has("workoutLogs")) {
+            const counts = countWorkoutLogUsage(data.workoutLogs, getIds);
+            data[storeName] = data[storeName].map((record) => ({ ...record, usageCount: counts.get(record.id) ?? 0 }));
+            storesToWrite.add(storeName);
+          }
+        }
+      }
+
+      for (const storeName of storesToWrite) {
+        const store = transaction.objectStore(storeName);
+        if (selected.has(storeName)) {
+          store.clear();
+        }
+        for (const record of data[storeName]) {
+          store.put(record);
+        }
+      }
+
+      const now = new Date().toISOString();
+      transaction.objectStore("activeWorkoutSessions").clear();
+      metadataStore.put({
+        ...(metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {}),
+        id: "app",
+        schemaVersion: SCHEMA_VERSION,
+        createdAt: metadata?.createdAt ?? now,
+        updatedAt: now,
+        importedAt: now,
+      });
+      await done;
+    } catch (error) {
+      // A request error may already have aborted the transaction.
+      try { transaction.abort(); } catch {}
+      await done.catch(() => {});
+      throw error;
+    }
 
     return {
       importedCounts: Object.fromEntries(
-        TRANSFER_STORE_NAMES.map((storeName) => [storeName, importedData[storeName].length]),
+        importedStores.map((storeName) => [storeName, importedData[storeName].length]),
       ),
     };
   } finally {
@@ -785,6 +876,100 @@ function normalizeCompletedSets(sets = []) {
       reps: parseReps(set.reps),
     }))
     .filter((set) => set.weightKg !== null || set.reps !== null);
+}
+
+function normalizeJournalSetEdits(changes) {
+  const normalized = new Map();
+
+  for (const [key, sets] of changes) {
+    const rows = sets.map(({ weightKg, reps }) => ({
+      weightKg: String(weightKg ?? "").trim(),
+      reps: String(reps ?? "").trim(),
+    }));
+    const hasInvalidValue = rows.some(({ weightKg, reps }) => {
+      return (weightKg !== "" && (!/^(?:\d+(?:[,.]\d*)?|[,.]\d+)$/.test(weightKg) || parseWeightKg(weightKg) === null)) ||
+        (reps !== "" && (!/^\d+$/.test(reps) || !Number.isSafeInteger(Number(reps))));
+    });
+
+    if (hasInvalidValue) {
+      return null;
+    }
+
+    normalized.set(key, normalizeCompletedSets(rows).map((set, index) => ({ ...set, setNumber: index + 1 })));
+  }
+
+  return normalized;
+}
+
+function updateWorkoutLogExerciseSets(workoutLog, changes) {
+  const records = new Map(collectExerciseLogEntries(workoutLog).map((exerciseLog) => [exerciseLog, undefined]));
+
+  if (Array.isArray(workoutLog.exerciseLogs)) {
+    for (const exerciseLog of workoutLog.exerciseLogs) {
+      records.set(exerciseLog, undefined);
+    }
+  }
+
+  for (const muscleLog of workoutLog.muscleGroupLogs ?? []) {
+    if (Array.isArray(muscleLog.exerciseLogs)) {
+      for (const exerciseLog of muscleLog.exerciseLogs) {
+        records.set(exerciseLog, muscleLog.muscleGroupId ?? muscleLog.muscleGroup?.id);
+      }
+    }
+  }
+
+  const updated = new Set();
+  for (const [exerciseLog, groupId] of records) {
+    if (!exerciseLog || typeof exerciseLog !== "object") {
+      continue;
+    }
+
+    const key = getWorkoutLogExerciseKey(exerciseLog, groupId);
+    if (changes.has(key)) {
+      exerciseLog.sets = changes.get(key);
+      updated.add(key);
+    }
+  }
+
+  return updated.size === changes.size;
+}
+
+export async function saveWorkoutLogSets(originalLog, changes) {
+  const normalized = normalizeJournalSetEdits(changes);
+  if (!normalized) {
+    return { status: "invalid" };
+  }
+
+  const database = await openAppDatabase();
+
+  try {
+    const transaction = database.transaction("workoutLogs", "readwrite");
+    const done = transactionDone(transaction);
+    const store = transaction.objectStore("workoutLogs");
+    const [result] = await Promise.all([
+      requestToPromise(store.get(originalLog.id)).then((currentLog) => {
+        if (!currentLog) {
+          return { status: "missing" };
+        }
+
+        if (JSON.stringify(currentLog) !== JSON.stringify(originalLog)) {
+          return { status: "changed", workoutLog: currentLog };
+        }
+
+        if (!updateWorkoutLogExerciseSets(currentLog, normalized)) {
+          throw new Error("Workout exercise missing from log");
+        }
+
+        store.put(currentLog);
+        return { status: "saved", workoutLog: currentLog };
+      }),
+      done,
+    ]);
+
+    return result;
+  } finally {
+    database.close();
+  }
 }
 
 function getWorkoutLogExerciseIds(log) {

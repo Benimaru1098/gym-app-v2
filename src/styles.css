@@ -620,6 +620,144 @@ h2 {
   font-weight: 600;
 }
 
+.app-dialog {
+  width: min(420px, calc(100% - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.app-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.56);
+  opacity: 1;
+  transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-dialog[data-closing]::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .app-dialog::backdrop {
+    opacity: 0;
+  }
+}
+
+.app-dialog-layout {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  max-height: inherit;
+  padding: 16px;
+}
+
+.app-dialog-content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-dialog-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 116px), 1fr));
+  gap: 8px;
+}
+
+.confirmation-message {
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+}
+
+.import-form {
+  display: grid;
+  gap: 8px;
+  color: var(--text-soft);
+}
+
+.import-options {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.import-option {
+  position: relative;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.import-option > input {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  opacity: 0;
+}
+
+.import-checkbox {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+  background: var(--surface);
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.import-checkbox-mark {
+  display: flex;
+}
+
+.import-checkbox .icon-wrap {
+  width: 16px;
+  height: 16px;
+}
+
+.import-checkbox svg {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.import-option > input:checked + .import-checkbox {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.import-option > input:focus-visible + .import-checkbox {
+  outline: 2px solid var(--text-soft);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-dialog::backdrop,
+  .import-checkbox {
+    transition: none;
+  }
+}
+
+.import-option-count {
+  margin-left: auto;
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.import-error {
+  color: var(--danger);
+}
+
 .exercise-technique-sheet {
   height: calc(min(76dvh, 450px) + var(--bottom-sheet-skirt));
 }
@@ -952,6 +1090,7 @@ button.journal-card:active {
 
 .journal-detail-actions {
   display: grid;
+  gap: 8px;
   margin-top: 2px;
 }
 
@@ -1059,6 +1198,7 @@ button.journal-card:active {
 }
 
 .journal-set-list li {
+  position: relative;
   display: grid;
   gap: 5px;
   padding: 13px;
@@ -1067,7 +1207,7 @@ button.journal-card:active {
   background: var(--surface-3);
 }
 
-.journal-set-list span {
+.journal-set-list li > span {
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
@@ -1078,6 +1218,56 @@ button.journal-card:active {
   font-size: 21px;
   font-weight: 600;
   line-height: 1.05;
+}
+
+.journal-set-editor {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.journal-set-list .journal-set-remove-button {
+  position: absolute;
+  top: 5px;
+  right: 2px;
+  width: 36px;
+}
+
+.journal-set-input {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.journal-set-input::before {
+  content: attr(data-value);
+  visibility: hidden;
+}
+
+.journal-set-input input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.journal-set-input input:focus {
+  outline: 1px solid var(--accent-line);
+  outline-offset: 1px;
+}
+
+.journal-set-input input::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 .exercise-history-entry {
