@@ -26,7 +26,6 @@ import {
   FREE_WORKOUT_GROUP_ID,
   FREE_WORKOUT_NAME,
   buildActiveWorkoutSessionDraft,
-  buildExerciseCreationData,
   buildExerciseEditingData,
   buildExerciseHistory,
   buildExerciseSummariesByMuscleGroup,
@@ -196,7 +195,7 @@ function createInitialState() {
     confirmation: null,
     data: null,
     error: null,
-    exerciseDraft: { name: "", mediaUrl: "" },
+    exerciseDraft: { name: "", techniqueSteps: [], mediaUrl: "" },
     exerciseTechniqueViewer: null,
     freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     homeView: { name: "overview", workoutGroupId: null },
@@ -265,6 +264,8 @@ function normalizePlanView(view) {
       return { name: "createExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: null, trainingDayId: null };
     case "editExercise":
       return { name: "editExercise", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: view.exerciseId, trainingDayId: null };
+    case "exerciseTechnique":
+      return { name: "exerciseTechnique", muscleGroupId: view.muscleGroupId, templateId: null, exerciseId: view.exerciseId, trainingDayId: null };
     case "exerciseHistory":
       return {
         name: "exerciseHistory",
@@ -408,6 +409,7 @@ function getPlanBackTarget(planView) {
 
   switch (normalized.name) {
     case "exerciseHistory":
+    case "exerciseTechnique":
       return { activeTab: "plan", planView: { ...normalized, name: "editExercise" } };
     case "createTrainingDay":
     case "editTrainingDay":
@@ -822,15 +824,24 @@ function getActiveWorkoutSessionForGroup(appState, workoutGroupId) {
   })[0] ?? null;
 }
 
-function getExerciseTechniquePayload(exercise) {
-  if (!exercise) {
-    return { name: "Упражнение", mediaUrl: "" };
-  }
-
+function getExerciseTechniquePayload(exercise, data) {
+  const techniqueDescription = exercise?.techniqueDescription ??
+    data?.exercises.find((item) => item.id === exercise?.id)?.techniqueDescription ?? "";
   return {
-    name: exercise.name ?? exercise.exerciseNameSnapshot ?? "Упражнение",
-    mediaUrl: exercise.mediaUrl ?? "",
+    name: exercise?.name ?? exercise?.exerciseNameSnapshot ?? "Упражнение",
+    mediaUrl: exercise?.mediaUrl ?? "",
+    techniqueDescription,
   };
+}
+
+function getTechniqueSteps(description = "") {
+  return description.split(/\r?\n/)
+    .map((line) => line.trim().replace(/^\d+[.)](?:\s+|$)/, ""))
+    .filter(Boolean);
+}
+
+function serializeTechniqueSteps(steps) {
+  return steps.map((step) => step.replace(/\s*\r?\n\s*/g, " ").trim()).filter(Boolean).join("\n");
 }
 
 function useExerciseTechniqueLongPress(onOpenTechnique) {
@@ -1042,7 +1053,8 @@ function getViewScrollKey(appState) {
 function getViewDepth(appState) {
   if (
     (appState.activeTab === "home" && appState.homeView.name === "exerciseHistory") ||
-    (appState.activeTab === "plan" && appState.planView.name === "exerciseHistory")
+    (appState.activeTab === "plan" &&
+      (appState.planView.name === "exerciseHistory" || appState.planView.name === "exerciseTechnique"))
   ) {
     return 3;
   }
@@ -1451,16 +1463,16 @@ function App() {
 
   const openExerciseTechnique = useCallback(
     (exercise) => {
-      const payload = getExerciseTechniquePayload(exercise);
+      const payload = getExerciseTechniquePayload(exercise, stateRef.current.data);
       const media = getExerciseMedia(payload.mediaUrl);
 
-      if (media.type === "empty") {
-        showNotice("Техника не добавлена");
-        return;
-      }
-
-      if (media.type === "invalid") {
-        showNotice("Проверьте ссылку на технику", "error");
+      if (!getTechniqueSteps(payload.techniqueDescription).length &&
+        (media.type === "empty" || media.type === "invalid")) {
+        if (media.type === "invalid") {
+          showNotice("Проверьте ссылку на технику", "error");
+        } else {
+          showNotice("Техника не добавлена");
+        }
         return;
       }
 
@@ -2069,7 +2081,7 @@ function App() {
       navigate({
         activeTab: "plan",
         planView: { name: "createExercise", muscleGroupId },
-        exerciseDraft: { name: "", mediaUrl: "" },
+        exerciseDraft: { name: "", techniqueSteps: [], mediaUrl: "" },
       });
     },
     [navigate],
@@ -2077,18 +2089,24 @@ function App() {
 
   const openExerciseEdit = useCallback(
     (muscleGroupId, exerciseId) => {
-  const details = buildExerciseEditingData(stateRef.current.data, exerciseId);
+      const details = buildExerciseEditingData(stateRef.current.data, exerciseId);
       navigate({
         activeTab: "plan",
         planView: { name: "editExercise", muscleGroupId, exerciseId },
         exerciseDraft: {
           name: details.exercise?.name || "",
-          mediaUrl: details.exercise?.mediaUrl || "",
+          techniqueSteps: [],
+          mediaUrl: "",
         },
       });
     },
     [navigate],
   );
+
+  const openExerciseTechniqueEditor = useCallback(() => {
+    const { planView } = stateRef.current;
+    navigate({ planView: { ...planView, name: "exerciseTechnique" } });
+  }, [navigate]);
 
   const openExerciseHistory = useCallback((exerciseId, exerciseName) => {
     const { activeTab, homeView, planView } = stateRef.current;
@@ -2855,41 +2873,44 @@ function App() {
     patchState((current) => ({ exerciseDraft: { ...current.exerciseDraft, mediaUrl: value } }));
   }, [patchState]);
 
+  const handleExerciseTechniqueStepsChange = useCallback((techniqueSteps) => {
+    patchState((current) => ({ exerciseDraft: { ...current.exerciseDraft, techniqueSteps } }));
+  }, [patchState]);
+
   const handleSaveExercise = useCallback(
     async (event) => {
       event.preventDefault();
-      const current = stateRef.current;
-      const { planView, exerciseDraft, data } = current;
-      const details =
-        planView.name === "editExercise"
-          ? buildExerciseEditingData(data, planView.exerciseId)
-          : buildExerciseCreationData(data, planView.muscleGroupId);
-
+      const { planView, exerciseDraft } = stateRef.current;
+      const isEdit = planView.name === "editExercise";
       const name = exerciseDraft.name.trim();
-      const mediaUrl = exerciseDraft.mediaUrl?.trim() || "";
+      const mediaUrl = exerciseDraft.mediaUrl.trim();
       if (!name) {
         showNotice("Введите название упражнения", "error");
         return;
       }
 
-      if (getExerciseMedia(mediaUrl).type === "invalid") {
+      if (!isEdit && getExerciseMedia(mediaUrl).type === "invalid") {
         showNotice("Вставьте прямую ссылку на GIF или ссылку на видео YouTube", "error");
         return;
       }
 
-      const exercise = {
-        ...(details.exercise || {}),
-        id: details.exercise?.id || createId("exercise"),
-        name,
-        mediaUrl,
-        muscleGroupId: details.exercise?.muscleGroupId || planView.muscleGroupId,
-        trackingType: details.exercise?.trackingType || TRACKING_TYPES.WEIGHT_REPS,
-        isArchived: Boolean(details.exercise?.isArchived),
-        usageCount: Number(details.exercise?.usageCount || 0),
-      };
+      const exercise = isEdit
+        ? { id: planView.exerciseId, name }
+        : {
+            id: createId("exercise"),
+            name,
+            mediaUrl,
+            techniqueDescription: serializeTechniqueSteps(exerciseDraft.techniqueSteps),
+            muscleGroupId: planView.muscleGroupId,
+            trackingType: TRACKING_TYPES.WEIGHT_REPS,
+          };
 
       try {
-        await saveExercise(exercise);
+        const result = await saveExercise(exercise, { updateOnly: isEdit });
+        if (result.status === "missing") {
+          showNotice("Упражнение не найдено", "error");
+          return;
+        }
         await refreshData();
         showNotice("Упражнение сохранено");
         goBack();
@@ -2900,6 +2921,37 @@ function App() {
     },
     [goBack, refreshData, showNotice],
   );
+
+  const handleSaveExerciseTechnique = useCallback(async (exerciseId, { techniqueDescription, mediaUrl }) => {
+    const { exercise } = buildExerciseEditingData(stateRef.current.data, exerciseId);
+    if (!exercise) {
+      showNotice("Упражнение не найдено", "error");
+      return;
+    }
+
+    if (mediaUrl !== exercise.mediaUrl && getExerciseMedia(mediaUrl).type === "invalid") {
+      showNotice("Вставьте прямую ссылку на GIF или ссылку на видео YouTube", "error");
+      return;
+    }
+
+    try {
+      const result = await saveExercise({ id: exerciseId, techniqueDescription, mediaUrl }, { updateOnly: true });
+      if (result.status === "missing") {
+        showNotice("Упражнение не найдено", "error");
+        return;
+      }
+      await refreshData();
+      showNotice("Техника сохранена");
+      const currentView = stateRef.current.planView;
+      if (stateRef.current.activeTab === "plan" && currentView.name === "exerciseTechnique" &&
+        currentView.exerciseId === exercise.id) {
+        goBack();
+      }
+    } catch (error) {
+      console.error(error);
+      showNotice("Не удалось сохранить технику", "error");
+    }
+  }, [goBack, refreshData, showNotice]);
 
   const handleDeleteExercise = useCallback(async () => {
     const current = stateRef.current;
@@ -3029,7 +3081,7 @@ function App() {
           activeExerciseReplacement: null,
           data,
           error: null,
-          exerciseDraft: { name: "", mediaUrl: "" },
+          exerciseDraft: { name: "", techniqueSteps: [], mediaUrl: "" },
           exerciseTechniqueViewer: null,
           freeWorkoutDraft: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
           homeView: { name: "settings", workoutGroupId: null },
@@ -3249,6 +3301,7 @@ function App() {
             onOpenExerciseEdit={openExerciseEdit}
             onOpenExerciseHistory={openExerciseHistory}
             onOpenExerciseTechnique={openExerciseTechnique}
+            onOpenExerciseTechniqueEditor={openExerciseTechniqueEditor}
             onTemplateNameChange={handleTemplateNameChange}
             onAddDraftExercise={addDraftExercise}
             onRemoveDraftExercise={removeDraftExercise}
@@ -3257,7 +3310,9 @@ function App() {
             onDeleteTemplate={handleDeleteTemplate}
             onExerciseNameChange={handleExerciseNameChange}
             onExerciseMediaUrlChange={handleExerciseMediaUrlChange}
+            onExerciseTechniqueStepsChange={handleExerciseTechniqueStepsChange}
             onSaveExercise={handleSaveExercise}
+            onSaveExerciseTechnique={handleSaveExerciseTechnique}
             onDeleteExercise={handleDeleteExercise}
           />
         );
@@ -3321,12 +3376,14 @@ function App() {
     handleSaveWorkoutLogSets,
     handleExerciseNameChange,
     handleExerciseMediaUrlChange,
+    handleExerciseTechniqueStepsChange,
     handleExportData,
     handleFinishActiveWorkout,
     handleContinueWorkout,
     handleImportData,
     handleInstallApp,
     handleSaveExercise,
+    handleSaveExerciseTechnique,
     handleSaveTemplate,
     handleSaveTrainingDay,
     handleTemplateDragStart,
@@ -3339,6 +3396,7 @@ function App() {
     openExerciseHistory,
     openExerciseReplacement,
     openExerciseTechnique,
+    openExerciseTechniqueEditor,
     openFreeWorkoutPreparation,
     openSettings,
     openJournalFilter,
@@ -4502,6 +4560,7 @@ function ActiveWorkoutScreen({
   const techniqueExercise = {
     name: exerciseLog.exerciseNameSnapshot,
     mediaUrl: exerciseMediaUrl,
+    techniqueDescription: exerciseFromBase?.techniqueDescription ?? "",
   };
   const previousSetsLabel = formatSetList(previousSets);
   const progressionAdvice = buildProgressionAdvice({
@@ -4534,7 +4593,7 @@ function ActiveWorkoutScreen({
             >
               <span>Заменить упражнение</span>
             </button>
-            {exerciseMediaUrl ? (
+            {exerciseMediaUrl || techniqueExercise.techniqueDescription ? (
               <button
                 className="action-button secondary-action active-technique-button"
                 type="button"
@@ -4771,6 +4830,7 @@ function PlanView({
   onOpenExerciseEdit,
   onOpenExerciseHistory,
   onOpenExerciseTechnique,
+  onOpenExerciseTechniqueEditor,
   onTemplateNameChange,
   onAddDraftExercise,
   onRemoveDraftExercise,
@@ -4779,7 +4839,9 @@ function PlanView({
   onDeleteTemplate,
   onExerciseNameChange,
   onExerciseMediaUrlChange,
+  onExerciseTechniqueStepsChange,
   onSaveExercise,
+  onSaveExerciseTechnique,
   onDeleteExercise,
 }) {
   if (planView.name === "createTrainingDay" || planView.name === "editTrainingDay") {
@@ -4842,17 +4904,23 @@ function PlanView({
   if (planView.name === "createExercise" || planView.name === "editExercise") {
     return (
       <ExerciseFormScreen
-        data={data}
         planView={planView}
         draft={exerciseDraft}
         onBack={onBack}
         onNameChange={onExerciseNameChange}
         onMediaUrlChange={onExerciseMediaUrlChange}
+        onTechniqueStepsChange={onExerciseTechniqueStepsChange}
         onSave={onSaveExercise}
         onDelete={onDeleteExercise}
         onOpenHistory={onOpenExerciseHistory}
+        onOpenTechniqueEditor={onOpenExerciseTechniqueEditor}
       />
     );
+  }
+
+  if (planView.name === "exerciseTechnique") {
+    const { exercise } = buildExerciseEditingData(data, planView.exerciseId);
+    return <ExerciseTechniqueScreen exercise={exercise} onBack={onBack} onSave={onSaveExerciseTechnique} />;
   }
 
   return (
@@ -4952,7 +5020,7 @@ function PlanOverview({
           <InfoNotice label="Описание базы упражнений">
             <p>
               Здесь хранится список доступных упражнений для каждой группы мышц. Упражнения можно
-              добавлять, изменять и удалять, а также добавлять ссылки на технику выполнения.
+              добавлять, изменять и удалять. Для каждого упражнения можно сохранить шаги техники и ссылку на видео или GIF.
             </p>
             <p>Упражнения из базы используются в шаблонах, «Своём плане» и при замене упражнения.</p>
           </InfoNotice>
@@ -5408,7 +5476,7 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
                   onClick={() => onOpenTechnique(exercise)}
                 >
                   <h2>{exercise.name}</h2>
-                  {exercise.mediaUrl ? <span>Техника добавлена</span> : null}
+                  {exercise.techniqueDescription || exercise.mediaUrl ? <span>Техника добавлена</span> : null}
                 </button>
                 <EditIconButton
                   label={`Редактировать упражнение ${exercise.name}`}
@@ -5449,14 +5517,153 @@ function ExerciseGifPreview({ src }) {
   );
 }
 
-function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMediaUrlChange, onSave, onDelete, onOpenHistory }) {
-  const details =
-    planView.name === "editExercise"
-      ? buildExerciseEditingData(data, planView.exerciseId)
-      : buildExerciseCreationData(data, planView.muscleGroupId);
-  const isEdit = planView.name === "editExercise";
-  const media = getExerciseMedia(draft.mediaUrl);
+function ExerciseTechniqueSteps({ steps }) {
+  return (
+    <ol className="exercise-technique-steps">
+      {steps.map((step, index) => <li key={index}>{step}</li>)}
+    </ol>
+  );
+}
 
+function ExerciseTechniqueStepFields({ steps, onChange }) {
+  const fields = Array.from({ length: Math.max(3, steps.length) }, (_, index) => steps[index] ?? "");
+
+  return (
+    <fieldset className="form-field technique-step-fields">
+      <legend className="form-label-text">Описание техники</legend>
+      {fields.map((step, index) => (
+        <label className="technique-step-field" key={index}>
+          <span className="technique-step-number" aria-hidden="true">{index + 1}.</span>
+          <textarea
+            className="form-input technique-step-input"
+            aria-label={`Шаг ${index + 1}`}
+            placeholder="Описание шага"
+            rows={2}
+            value={step}
+            onChange={(event) => {
+              const nextFields = [...fields];
+              nextFields[index] = event.target.value;
+              onChange(nextFields);
+            }}
+          />
+        </label>
+      ))}
+      <button className="action-button secondary-action" type="button" onClick={() => onChange([...fields, ""])}>
+        Добавить шаг
+      </button>
+    </fieldset>
+  );
+}
+
+function ExerciseMediaFields({ value, onChange }) {
+  const media = getExerciseMedia(value);
+  return (
+    <>
+      <div className="form-field">
+        <div className="form-input-with-notice has-notice">
+          <input
+            className="form-input"
+            type="text"
+            name="exerciseMediaUrl"
+            value={value}
+            aria-label="Ссылка на GIF или YouTube"
+            placeholder="Ссылка на GIF или YouTube"
+            inputMode="url"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            onChange={onChange}
+          />
+          <InfoNotice label="Как добавить ссылку на технику">
+            <p>
+              В YouTube открой видео или Shorts, нажми «Поделиться» и скопируй ссылку.
+            </p>
+            <p>
+              Для GIF нажми и удерживай изображение в браузере, затем выбери
+              «Копировать адрес изображения» и вставь ссылку в это поле.
+            </p>
+          </InfoNotice>
+        </div>
+      </div>
+      <div className="form-field">
+        <span className="form-label-text">Предпросмотр</span>
+        {media.type === "gif" ? (
+          <ExerciseGifPreview key={media.src} src={media.src} />
+        ) : media.type === "youtube" ? (
+          <div className={`exercise-media-preview${media.isShort ? " is-short" : ""}`}>
+            <ExerciseYouTubePlayer media={media} title="Предпросмотр видео техники" />
+          </div>
+        ) : (
+          <div className={`exercise-media-preview${media.type === "invalid" ? " is-error" : ""}`}>
+            <span>{media.type === "empty" ? "Ссылка ещё не добавлена" : "Проверьте ссылку на технику."}</span>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ExerciseTechniqueScreen({ exercise, onBack, onSave }) {
+  const [techniqueSteps, setTechniqueSteps] = useState(() => getTechniqueSteps(exercise?.techniqueDescription));
+  const [mediaUrl, setMediaUrl] = useState(exercise?.mediaUrl ?? "");
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const techniqueDescription = serializeTechniqueSteps(techniqueSteps);
+  const steps = getTechniqueSteps(techniqueDescription);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    if (isSaving) {
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await onSave(exercise.id, { techniqueDescription, mediaUrl: mediaUrl.trim() });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <section className="screen plan-screen">
+      <header className="screen-header">
+        <ScreenTitle onBack={onBack}>Техника упражнения</ScreenTitle>
+      </header>
+      {exercise ? (
+        <form className="template-form" onSubmit={handleSubmit}>
+          <section className="panel">
+            <div className="section-title">
+              <h2>{exercise.name}</h2>
+              <EditIconButton
+                label={isEditing ? "Показать описание техники" : "Редактировать описание техники"}
+                onClick={() => setIsEditing((editing) => !editing)}
+              />
+            </div>
+            {isEditing ? (
+              <ExerciseTechniqueStepFields steps={techniqueSteps} onChange={setTechniqueSteps} />
+            ) : steps.length ? (
+              <ExerciseTechniqueSteps steps={steps} />
+            ) : (
+              <p className="form-label-text">Описание техники ещё не добавлено.</p>
+            )}
+          </section>
+          <ExerciseMediaFields value={mediaUrl} onChange={(event) => setMediaUrl(event.target.value)} />
+          <button className="action-button" type="submit" disabled={isSaving}>
+            <span>Сохранить технику</span>
+          </button>
+        </form>
+      ) : (
+        <div className="panel">Упражнение не найдено</div>
+      )}
+    </section>
+  );
+}
+
+function ExerciseFormScreen({
+  planView, draft, onBack, onNameChange, onMediaUrlChange, onTechniqueStepsChange,
+  onSave, onDelete, onOpenHistory, onOpenTechniqueEditor,
+}) {
+  const isEdit = planView.name === "editExercise";
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
@@ -5486,46 +5693,16 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
           </div>
         </div>
 
-        <div className="form-field">
-          <div className="form-input-with-notice has-notice">
-            <input
-              className="form-input"
-              type="text"
-              name="exerciseMediaUrl"
-              value={draft.mediaUrl || ""}
-              placeholder="Ссылка на GIF или YouTube"
-              inputMode="url"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              onChange={onMediaUrlChange}
-            />
-            <InfoNotice label="Как добавить ссылку на технику">
-              <p>
-                В YouTube открой видео или Shorts, нажми «Поделиться» и скопируй ссылку.
-              </p>
-              <p>
-                Для GIF нажми и удерживай изображение в браузере, затем выбери
-                «Копировать адрес изображения» и вставь ссылку в это поле.
-              </p>
-            </InfoNotice>
-          </div>
-        </div>
-
-        <div className="form-field">
-          <span className="form-label-text">Предпросмотр</span>
-          {media.type === "gif" ? (
-            <ExerciseGifPreview key={media.src} src={media.src} />
-          ) : media.type === "youtube" ? (
-            <div className="exercise-media-preview">
-              <ExerciseYouTubePlayer media={media} title="Предпросмотр видео техники" />
-            </div>
-          ) : (
-            <div className={`exercise-media-preview${media.type === "invalid" ? " is-error" : ""}`}>
-              <span>{media.type === "empty" ? "Техника не добавлена" : "Проверьте ссылку на технику."}</span>
-            </div>
-          )}
-        </div>
+        {isEdit ? (
+          <button className="action-button secondary-action" type="button" onClick={onOpenTechniqueEditor}>
+            <span>Техника упражнения</span>
+          </button>
+        ) : (
+          <>
+            <ExerciseTechniqueStepFields steps={draft.techniqueSteps} onChange={onTechniqueStepsChange} />
+            <ExerciseMediaFields value={draft.mediaUrl} onChange={onMediaUrlChange} />
+          </>
+        )}
 
         {isEdit ? (
           <button className="action-button secondary-action" type="button" onClick={() => onOpenHistory(planView.exerciseId)}>
@@ -6284,23 +6461,24 @@ function ImportOptionsDialog({ draft, onClose, onImport }) {
 
 function ExerciseTechniqueSheet({ viewer, onClose }) {
   const media = getExerciseMedia(viewer.mediaUrl);
-  const isVideo = media.type === "youtube";
+  const steps = getTechniqueSteps(viewer.techniqueDescription);
 
   return (
     <BottomSheet
-      className={`exercise-technique-sheet${media.isShort ? " has-short" : ""}`}
+      className="exercise-technique-sheet"
       ariaLabel={`Техника упражнения ${viewer.name}`}
       backdropLabel="Закрыть просмотр техники"
       onClose={onClose}
     >
-      <div className="exercise-technique-header">
-        <h2>{viewer.name}</h2>
+      <div className="exercise-technique-content">
+        <div className="exercise-technique-body">
+          <div className="exercise-technique-header">
+            <h2>{viewer.name}</h2>
+          </div>
+          <ExerciseTechniqueMedia key={viewer.mediaUrl} media={media} name={viewer.name} />
+          {steps.length ? <ExerciseTechniqueSteps steps={steps} /> : null}
+        </div>
       </div>
-      {isVideo ? (
-        <ExerciseYouTubePlayer media={media} title={`Видео техники упражнения ${viewer.name}`} />
-      ) : (
-        <ExerciseTechniqueGif key={media.src} src={media.src} name={viewer.name} />
-      )}
     </BottomSheet>
   );
 }
@@ -6308,33 +6486,36 @@ function ExerciseTechniqueSheet({ viewer, onClose }) {
 function ExerciseYouTubePlayer({ media, title }) {
   const isPresent = useIsPresent();
 
-  return (
-    <div className={`exercise-youtube${media.isShort ? " is-short" : ""}`}>
-      {isPresent ? (
-        <iframe
-          key={media.embedUrl}
-          src={media.embedUrl}
-          title={title}
-          loading="lazy"
-          referrerPolicy="strict-origin-when-cross-origin"
-          allow="encrypted-media"
-          allowFullScreen
-        />
-      ) : null}
-    </div>
-  );
+  return isPresent ? (
+    <iframe
+      key={media.embedUrl}
+      className="exercise-youtube-player"
+      src={media.embedUrl}
+      title={title}
+      loading="lazy"
+      referrerPolicy="strict-origin-when-cross-origin"
+      allow="encrypted-media"
+      allowFullScreen
+    />
+  ) : null;
 }
 
-function ExerciseTechniqueGif({ src, name }) {
+function ExerciseTechniqueMedia({ media, name }) {
   const [hasError, setHasError] = useState(false);
+
+  if (media.type !== "gif" && media.type !== "youtube") {
+    return null;
+  }
 
   return (
     <div className={`exercise-technique-media${hasError ? " is-error" : ""}`}>
       {hasError ? (
         <span>Не удалось загрузить GIF. Проверьте ссылку.</span>
+      ) : media.type === "youtube" ? (
+        <ExerciseYouTubePlayer media={media} title={`Видео техники упражнения ${name}`} />
       ) : (
         <img
-          src={src}
+          src={media.src}
           alt={`Техника упражнения ${name}`}
           loading="lazy"
           decoding="async"

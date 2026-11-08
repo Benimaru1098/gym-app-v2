@@ -5,9 +5,14 @@ import {
   isProtectedTemplate,
 } from "../domain/templateRules.js";
 import { SCHEMA_VERSION, createInitialData, initialData } from "./seed.js";
+import techniqueCatalog from "./exercise-techniques.json" with { type: "json" };
+import legacyTechniqueFingerprints from "./legacy-technique-fingerprints.json" with { type: "json" };
 
 const DB_NAME = "gym-cycle-db";
 const DB_VERSION = 3;
+const DEFAULT_TECHNIQUE_BY_ID = new Map(
+  Object.entries(techniqueCatalog).map(([id, steps]) => [id, steps.join("\n")]),
+);
 
 const STORE_NAMES = [
   "metadata",
@@ -99,9 +104,32 @@ function normalizeExerciseTemplate(template) {
   };
 }
 
+function isLegacyDefaultTechnique(exerciseId, description) {
+  const fingerprint = legacyTechniqueFingerprints[exerciseId];
+  if (typeof fingerprint !== "string" || !fingerprint.startsWith(`${description.length}:`)) {
+    return false;
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < description.length; index += 1) {
+    hash = Math.imul(hash ^ description.charCodeAt(index), 16777619);
+  }
+  return fingerprint === `${description.length}:${(hash >>> 0).toString(16)}`;
+}
+
 function normalizeExercise(exercise) {
+  const { techniqueDescription, ...record } = exercise;
+  const description = typeof techniqueDescription === "string" ? techniqueDescription.trim() : undefined;
+  const defaultDescription = DEFAULT_TECHNIQUE_BY_ID.get(exercise.id);
+  // Храним только личный текст. Старые сборки записывали в базу и стандартный.
+  if (description !== undefined &&
+    (defaultDescription === undefined ||
+      (description !== defaultDescription && !isLegacyDefaultTechnique(exercise.id, description)))) {
+    record.techniqueDescription = description;
+  }
+
   return {
-    ...exercise,
+    ...record,
     mediaUrl: typeof exercise.mediaUrl === "string" ? exercise.mediaUrl.trim() : "",
     isArchived: Boolean(exercise.isArchived),
     usageCount: Number(exercise.usageCount ?? 0),
@@ -277,7 +305,11 @@ export async function loadAppData() {
     return {
       metadata: metadataItems.find((item) => item.id === "app") ?? null,
       muscleGroups,
-      exercises: exercises.map(normalizeExercise),
+      exercises: exercises.map((exercise) => {
+        const record = normalizeExercise(exercise);
+        record.techniqueDescription ??= DEFAULT_TECHNIQUE_BY_ID.get(exercise.id) ?? "";
+        return record;
+      }),
       exerciseTemplates: exerciseTemplates.map(normalizeExerciseTemplate),
       workoutGroups: workoutGroups.map(normalizeWorkoutGroup),
       workoutLogs,
@@ -302,7 +334,7 @@ export async function exportAppData() {
     data: {
       metadata: data.metadata,
       muscleGroups: [...data.muscleGroups].sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0)),
-      exercises: data.exercises.map(normalizeExercise),
+      exercises: data.exercises,
       exerciseTemplates: data.exerciseTemplates.map(normalizeExerciseTemplate),
       workoutGroups: data.workoutGroups.map(normalizeWorkoutGroup),
       workoutLogs: [...data.workoutLogs].sort((a, b) => {
@@ -623,16 +655,21 @@ export async function saveExerciseTemplate(template) {
   }
 }
 
-export async function saveExercise(exercise) {
+export async function saveExercise(exercise, { updateOnly = false } = {}) {
   const database = await openAppDatabase();
 
   try {
     const metadata = await readMetadata(database);
     const transaction = database.transaction(["metadata", "exercises"], "readwrite");
     const done = transactionDone(transaction);
-    const normalizedExercise = normalizeExercise(exercise);
+    const exerciseStore = transaction.objectStore("exercises");
+    const existing = updateOnly ? await requestToPromise(exerciseStore.get(exercise.id)) : null;
+    if (updateOnly && (!existing || existing.isArchived)) {
+      await done;
+      return { status: "missing" };
+    }
 
-    transaction.objectStore("exercises").put(normalizedExercise);
+    exerciseStore.put(normalizeExercise({ ...existing, ...exercise }));
     transaction.objectStore("metadata").put({
       id: "app",
       schemaVersion: SCHEMA_VERSION,
@@ -641,6 +678,7 @@ export async function saveExercise(exercise) {
     });
 
     await done;
+    return { status: "saved" };
   } finally {
     database.close();
   }

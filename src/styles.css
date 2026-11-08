@@ -813,11 +813,45 @@ h2 {
 }
 
 .exercise-technique-sheet {
-  height: calc(min(76dvh, 450px) + var(--bottom-sheet-skirt));
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(70dvh + var(--bottom-sheet-skirt));
+  gap: 6px;
+  padding-top: 8px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom) + var(--bottom-sheet-skirt));
 }
 
-.exercise-technique-sheet.has-short {
-  height: calc(min(90dvh, 560px) + var(--bottom-sheet-skirt));
+.exercise-technique-content {
+  display: grid;
+  min-height: 0;
+  container-type: size;
+}
+
+.exercise-technique-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.exercise-technique-body > * {
+  flex-shrink: 0;
+}
+
+.exercise-technique-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-inline-start: 1.5em;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.exercise-technique-steps li::marker {
+  font-weight: 600;
 }
 
 .exercise-technique-header {
@@ -830,20 +864,23 @@ h2 {
 }
 
 .exercise-technique-media {
-  position: relative;
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   place-items: center;
-  min-height: 0;
+  height: max(200px, calc(50dvh - 101px));
+  padding-inline: 4px;
   overflow: hidden;
   color: var(--text-soft);
   font-size: 14px;
   text-align: center;
 }
 
-.exercise-technique-media img {
-  display: block;
+.exercise-technique-media > :is(img, iframe) {
   width: 100%;
   height: 100%;
+}
+
+.exercise-technique-media img {
   object-fit: contain;
 }
 
@@ -852,30 +889,13 @@ h2 {
   color: var(--danger);
 }
 
-.exercise-youtube {
-  display: flex;
-  flex-direction: column;
-  justify-content: safe center;
+.exercise-youtube-player {
+  display: block;
   width: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.exercise-youtube iframe {
-  flex: 0 0 auto;
-  width: 100%;
-  height: auto;
   min-height: 200px;
-  aspect-ratio: 16 / 9;
   border: 0;
   border-radius: 8px;
   background: #000;
-}
-
-.exercise-technique-sheet .exercise-youtube.is-short iframe {
-  flex: 1 0 200px;
-  aspect-ratio: auto;
 }
 
 .prep-plan-list,
@@ -1977,6 +1997,43 @@ button.journal-card:active {
   color: var(--muted-2);
 }
 
+.technique-step-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.technique-step-fields legend {
+  margin-bottom: 8px;
+  padding: 0;
+}
+
+.technique-step-field {
+  display: grid;
+  grid-template-columns: 2ch minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.technique-step-number {
+  padding-top: 10px;
+  color: var(--text-soft);
+}
+
+.technique-step-input {
+  min-height: 66px;
+  padding: 10px 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  field-sizing: content;
+  resize: vertical;
+}
+
+.technique-step-fields > .action-button {
+  min-height: 44px;
+}
+
 .form-input:focus {
   border-color: var(--accent);
   outline: 0;
@@ -2065,7 +2122,11 @@ button.journal-card:active {
   color: var(--danger);
 }
 
-.exercise-media-preview .exercise-youtube.is-short iframe {
+.exercise-media-preview .exercise-youtube-player {
+  aspect-ratio: 16 / 9;
+}
+
+.exercise-media-preview.is-short .exercise-youtube-player {
   height: clamp(260px, 50dvh, 420px);
   aspect-ratio: auto;
 }
