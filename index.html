@@ -1,9 +1,18 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#222222" />
+    <meta name="theme-color" content="#222222" data-dark="#222222" data-light="#e4e0ed" />
+    <script>
+      try {
+        if (localStorage.getItem("gym-cycle-theme") === "light") {
+          document.documentElement.dataset.theme = "light";
+          const themeColor = document.querySelector('meta[name="theme-color"]');
+          themeColor.content = themeColor.dataset.light;
+        }
+      } catch {}
+    </script>
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
