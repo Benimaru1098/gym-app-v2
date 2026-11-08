@@ -86,7 +86,6 @@
     {"id": "ex-chest-pike-push-up", "name": "Пайк-отжимания", "muscleGroupId": "chest", "trackingType": "weight_reps", "isArchived": false},
     {"id": "ex-chest-push-up", "name": "Отжимания от пола", "muscleGroupId": "chest", "trackingType": "weight_reps", "isArchived": false},
     {"id": "ex-chest-seated-dips-machine", "name": "Отжимания в тренажёре сидя", "muscleGroupId": "chest", "trackingType": "weight_reps", "isArchived": false},
-    {"id": "ex-chest-smith-machine-bench-press", "name": "Жим лёжа в Смите", "muscleGroupId": "chest", "trackingType": "weight_reps", "isArchived": false},
     {"id": "ex-chest-smith-machine-incline-bench-press", "name": "Жим в Смите на наклонной скамье", "muscleGroupId": "chest", "trackingType": "weight_reps", "isArchived": false},
     {"id": "ex-chest-spoto-bench-press", "name": "Жим Спото", "muscleGroupId": "chest", "trackingType": "weight_reps", "isArchived": false},
     {"id": "ex-chest-standing-cable-fly", "name": "Сведение рук сверху вниз в кроссовере", "muscleGroupId": "chest", "trackingType": "weight_reps", "isArchived": false},

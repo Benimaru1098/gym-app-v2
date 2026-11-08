@@ -1,4 +1,4 @@
-import { AnimatePresence, LayoutGroup, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
+import { animate, AnimatePresence, LayoutGroup, mix, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   clearWorkoutLogs,
@@ -3730,12 +3730,116 @@ function HomeView({
   );
 }
 
+const THEME_TRANSITION_PROPERTIES = [
+  "--bg",
+  "--nav",
+  "--surface",
+  "--surface-3",
+  "--line",
+  "--line-strong",
+  "--text",
+  "--text-soft",
+  "--muted",
+  "--muted-2",
+  "--accent-line",
+  "--shadow",
+  "--shadow-soft",
+];
+const themeTransition = { duration: 0.24, ease: [0.25, 0.1, 0.25, 1] };
+
+function readThemePalette(root) {
+  const styles = getComputedStyle(root);
+  return THEME_TRANSITION_PROPERTIES.map((property) => styles.getPropertyValue(property).trim());
+}
+
+function ThemeSettings() {
+  const titleId = useId();
+  const shouldReduceMotion = useReducedMotion();
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme);
+  const stopThemeTransitionRef = useRef(null);
+
+  useEffect(() => () => stopThemeTransitionRef.current?.(), []);
+
+  function selectTheme(nextTheme) {
+    const root = document.documentElement;
+    if (nextTheme === root.dataset.theme) {
+      return;
+    }
+
+    const previousPalette = shouldReduceMotion ? null : readThemePalette(root);
+    stopThemeTransitionRef.current?.();
+    root.dataset.theme = nextTheme;
+
+    if (previousPalette) {
+      const mixPalette = mix(previousPalette, readThemePalette(root));
+      const applyPalette = (progress) => {
+        const palette = mixPalette(progress);
+        THEME_TRANSITION_PROPERTIES.forEach((property, index) => root.style.setProperty(property, palette[index]));
+      };
+      const clearPalette = () => {
+        THEME_TRANSITION_PROPERTIES.forEach((property) => root.style.removeProperty(property));
+        stopThemeTransitionRef.current = null;
+      };
+
+      applyPalette(0);
+      const animation = animate(0, 1, {
+        ...themeTransition,
+        onUpdate: applyPalette,
+        onComplete: clearPalette,
+      });
+      stopThemeTransitionRef.current = () => {
+        animation.stop();
+        clearPalette();
+      };
+    }
+
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    themeColor.content = themeColor.dataset[nextTheme];
+    setTheme(nextTheme);
+
+    try {
+      localStorage.setItem("gym-cycle-theme", nextTheme);
+    } catch {}
+  }
+
+  return (
+    <section className="panel plan-section">
+      <div className="section-title" id={titleId}>
+        <span>Тема приложения</span>
+      </div>
+      <div className="theme-options" role="group" aria-labelledby={titleId}>
+        {Object.entries({ light: "Светлая", dark: "Тёмная" }).map(([value, label], index) => (
+          <button
+            key={value}
+            className="action-button secondary-action theme-option"
+            style={{ gridColumn: index + 1 }}
+            type="button"
+            aria-pressed={theme === value}
+            onClick={() => selectTheme(value)}
+          >
+            <span>{label}</span>
+          </button>
+        ))}
+        <motion.span
+          className="theme-option-indicator"
+          style={{ gridColumn: theme === "light" ? 1 : 2 }}
+          layout={shouldReduceMotion ? false : "position"}
+          transition={themeTransition}
+          aria-hidden="true"
+        />
+      </div>
+    </section>
+  );
+}
+
 function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall }) {
   return (
     <section className="screen plan-screen settings-screen">
       <header className="screen-header">
         <ScreenTitle onBack={onBack}>Настройки</ScreenTitle>
       </header>
+
+      <ThemeSettings />
 
       <section className="panel plan-section data-section">
         <div className="section-title section-title-with-info">
