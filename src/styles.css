@@ -762,6 +762,10 @@ h2 {
   height: calc(min(76dvh, 450px) + var(--bottom-sheet-skirt));
 }
 
+.exercise-technique-sheet.has-short {
+  height: calc(min(90dvh, 560px) + var(--bottom-sheet-skirt));
+}
+
 .exercise-technique-header {
   min-width: 0;
 }
@@ -792,6 +796,32 @@ h2 {
 .exercise-technique-media.is-error {
   padding: 18px;
   color: var(--danger);
+}
+
+.exercise-youtube {
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.exercise-youtube iframe {
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto;
+  min-height: 200px;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 8px;
+  background: #000;
+}
+
+.exercise-technique-sheet .exercise-youtube.is-short iframe {
+  flex: 1 0 200px;
+  aspect-ratio: auto;
 }
 
 .prep-plan-list,
@@ -1973,6 +2003,11 @@ button.journal-card:active {
 
 .exercise-media-preview.is-error {
   color: var(--danger);
+}
+
+.exercise-media-preview .exercise-youtube.is-short iframe {
+  height: clamp(260px, 50dvh, 420px);
+  aspect-ratio: auto;
 }
 
 .search-field {

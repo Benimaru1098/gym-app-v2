@@ -1,4 +1,4 @@
-import { AnimatePresence, LayoutGroup, motion, useDragControls, useReducedMotion } from "motion/react";
+import { AnimatePresence, LayoutGroup, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   clearWorkoutLogs,
@@ -21,6 +21,7 @@ import {
   saveWorkoutLogSets,
 } from "./data/storage.js";
 import { TRACKING_TYPES } from "./data/seed.js";
+import { getExerciseMedia } from "./domain/exerciseMedia.js";
 import {
   FREE_WORKOUT_GROUP_ID,
   FREE_WORKOUT_NAME,
@@ -1451,18 +1452,20 @@ function App() {
   const openExerciseTechnique = useCallback(
     (exercise) => {
       const payload = getExerciseTechniquePayload(exercise);
-      const mediaUrl = payload.mediaUrl?.trim() || "";
+      const media = getExerciseMedia(payload.mediaUrl);
 
-      if (!mediaUrl) {
-        showNotice("GIF не добавлена");
+      if (media.type === "empty") {
+        showNotice("Техника не добавлена");
+        return;
+      }
+
+      if (media.type === "invalid") {
+        showNotice("Проверьте ссылку на технику", "error");
         return;
       }
 
       patchState({
-        exerciseTechniqueViewer: {
-          name: payload.name,
-          mediaUrl,
-        },
+        exerciseTechniqueViewer: payload,
       });
       pushOverlayHistory(OVERLAYS.exerciseTechnique);
     },
@@ -2869,6 +2872,11 @@ function App() {
         return;
       }
 
+      if (getExerciseMedia(mediaUrl).type === "invalid") {
+        showNotice("Вставьте прямую ссылку на GIF или ссылку на видео YouTube", "error");
+        return;
+      }
+
       const exercise = {
         ...(details.exercise || {}),
         id: details.exercise?.id || createId("exercise"),
@@ -2923,6 +2931,16 @@ function App() {
   }, [goBack, refreshData, requestConfirmation, showNotice]);
 
   const handleExportData = useCallback(async () => {
+    const confirmed = await requestConfirmation({
+      title: "Экспортировать данные?",
+      message: "Будет скачан JSON-файл с данными приложения.",
+      danger: false,
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
     try {
       const snapshot = await exportAppData();
       const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
@@ -2938,7 +2956,7 @@ function App() {
       console.error(error);
       showNotice("Не удалось экспортировать данные", "error");
     }
-  }, [showNotice]);
+  }, [requestConfirmation, showNotice]);
 
   const handleImportData = useCallback(() => {
     importFileInputRef.current?.click();
@@ -3384,7 +3402,7 @@ function App() {
             onClose={() => answerConfirmation(false)}
             actions={(
               <ConfirmationActions
-                danger
+                danger={state.confirmation.danger ?? true}
                 onCancel={() => answerConfirmation(false)}
                 onConfirm={() => answerConfirmation(true)}
               />
@@ -4830,7 +4848,7 @@ function PlanOverview({
           <InfoNotice label="Описание базы упражнений">
             <p>
               Здесь хранится список доступных упражнений для каждой группы мышц. Упражнения можно
-              добавлять, изменять и удалять, а также добавлять к ним анимацию техники выполнения.
+              добавлять, изменять и удалять, а также добавлять ссылки на технику выполнения.
             </p>
             <p>Упражнения из базы используются в шаблонах, «Своём плане» и при замене упражнения.</p>
           </InfoNotice>
@@ -5286,7 +5304,7 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
                   onClick={() => onOpenTechnique(exercise)}
                 >
                   <h2>{exercise.name}</h2>
-                  {exercise.mediaUrl ? <span>GIF добавлена</span> : null}
+                  {exercise.mediaUrl ? <span>Техника добавлена</span> : null}
                 </button>
                 <EditIconButton
                   label={`Редактировать упражнение ${exercise.name}`}
@@ -5306,28 +5324,14 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
   );
 }
 
-function ExerciseGifPreview({ mediaUrl }) {
-  const previewUrl = mediaUrl?.trim() || "";
-  const [status, setStatus] = useState(previewUrl ? "loading" : "empty");
-
-  useEffect(() => {
-    setStatus(previewUrl ? "loading" : "empty");
-  }, [previewUrl]);
-
-  if (!previewUrl) {
-    return (
-      <div className="exercise-media-preview is-empty">
-        <span>GIF не добавлена</span>
-      </div>
-    );
-  }
+function ExerciseGifPreview({ src }) {
+  const [status, setStatus] = useState("loading");
 
   return (
     <div className={`exercise-media-preview is-${status}`}>
       {status !== "error" ? (
         <img
-          key={previewUrl}
-          src={previewUrl}
+          src={src}
           alt="Предпросмотр GIF упражнения"
           loading="lazy"
           decoding="async"
@@ -5347,6 +5351,7 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
       ? buildExerciseEditingData(data, planView.exerciseId)
       : buildExerciseCreationData(data, planView.muscleGroupId);
   const isEdit = planView.name === "editExercise";
+  const media = getExerciseMedia(draft.mediaUrl);
 
   return (
     <section className="screen plan-screen">
@@ -5384,19 +5389,20 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
               type="text"
               name="exerciseMediaUrl"
               value={draft.mediaUrl || ""}
-              placeholder="Ссылка на GIF-анимацию"
+              placeholder="Ссылка на GIF или YouTube"
+              inputMode="url"
               autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
               onChange={onMediaUrlChange}
             />
-            <InfoNotice label="Как добавить ссылку на GIF-анимацию">
+            <InfoNotice label="Как добавить ссылку на технику">
               <p>
-                Найди в браузере GIF с техникой упражнения. Нажми и удерживай изображение, затем
-                выбери «Копировать адрес изображения» или открой изображение в новой вкладке и
-                скопируй адрес из строки браузера.
+                В YouTube открой видео или Shorts, нажми «Поделиться» и скопируй ссылку.
               </p>
               <p>
-                Вставь полученную ссылку в это поле. Она должна вести прямо на изображение, а не на
-                страницу сайта, то есть в конце ссылки дожно быть <strong>.gif</strong>.
+                Для GIF нажми и удерживай изображение в браузере, затем выбери
+                «Копировать адрес изображения» и вставь ссылку в это поле.
               </p>
             </InfoNotice>
           </div>
@@ -5404,7 +5410,17 @@ function ExerciseFormScreen({ data, planView, draft, onBack, onNameChange, onMed
 
         <div className="form-field">
           <span className="form-label-text">Предпросмотр</span>
-          <ExerciseGifPreview mediaUrl={draft.mediaUrl} />
+          {media.type === "gif" ? (
+            <ExerciseGifPreview key={media.src} src={media.src} />
+          ) : media.type === "youtube" ? (
+            <div className="exercise-media-preview">
+              <ExerciseYouTubePlayer media={media} title="Предпросмотр видео техники" />
+            </div>
+          ) : (
+            <div className={`exercise-media-preview${media.type === "invalid" ? " is-error" : ""}`}>
+              <span>{media.type === "empty" ? "Техника не добавлена" : "Проверьте ссылку на технику."}</span>
+            </div>
+          )}
         </div>
 
         {isEdit ? (
@@ -6163,20 +6179,12 @@ function ImportOptionsDialog({ draft, onClose, onImport }) {
 }
 
 function ExerciseTechniqueSheet({ viewer, onClose }) {
-  const mediaUrl = viewer?.mediaUrl?.trim() || "";
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    setHasError(false);
-  }, [mediaUrl]);
-
-  if (!viewer || !mediaUrl) {
-    return null;
-  }
+  const media = getExerciseMedia(viewer.mediaUrl);
+  const isVideo = media.type === "youtube";
 
   return (
     <BottomSheet
-      className="exercise-technique-sheet"
+      className={`exercise-technique-sheet${media.isShort ? " has-short" : ""}`}
       ariaLabel={`Техника упражнения ${viewer.name}`}
       backdropLabel="Закрыть просмотр техники"
       onClose={onClose}
@@ -6184,20 +6192,52 @@ function ExerciseTechniqueSheet({ viewer, onClose }) {
       <div className="exercise-technique-header">
         <h2>{viewer.name}</h2>
       </div>
-      <div className={`exercise-technique-media${hasError ? " is-error" : ""}`}>
-        {!hasError ? (
-          <img
-            key={mediaUrl}
-            src={mediaUrl}
-            alt={`Техника упражнения ${viewer.name}`}
-            loading="lazy"
-            decoding="async"
-            onError={() => setHasError(true)}
-          />
-        ) : null}
-        {hasError ? <span>Не удалось загрузить GIF. Проверьте ссылку.</span> : null}
-      </div>
+      {isVideo ? (
+        <ExerciseYouTubePlayer media={media} title={`Видео техники упражнения ${viewer.name}`} />
+      ) : (
+        <ExerciseTechniqueGif key={media.src} src={media.src} name={viewer.name} />
+      )}
     </BottomSheet>
+  );
+}
+
+function ExerciseYouTubePlayer({ media, title }) {
+  const isPresent = useIsPresent();
+
+  return (
+    <div className={`exercise-youtube${media.isShort ? " is-short" : ""}`}>
+      {isPresent ? (
+        <iframe
+          key={media.embedUrl}
+          src={media.embedUrl}
+          title={title}
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="encrypted-media"
+          allowFullScreen
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ExerciseTechniqueGif({ src, name }) {
+  const [hasError, setHasError] = useState(false);
+
+  return (
+    <div className={`exercise-technique-media${hasError ? " is-error" : ""}`}>
+      {hasError ? (
+        <span>Не удалось загрузить GIF. Проверьте ссылку.</span>
+      ) : (
+        <img
+          src={src}
+          alt={`Техника упражнения ${name}`}
+          loading="lazy"
+          decoding="async"
+          onError={() => setHasError(true)}
+        />
+      )}
+    </div>
   );
 }
 
