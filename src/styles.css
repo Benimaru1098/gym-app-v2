@@ -889,6 +889,13 @@ h2 {
   color: var(--danger);
 }
 
+.exercise-technique-note {
+  padding-inline: 4px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .exercise-youtube-player {
   display: block;
   width: 100%;

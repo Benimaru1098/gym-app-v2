@@ -20,7 +20,7 @@ import {
   saveWorkoutGroupSelectedTemplate,
   saveWorkoutLogSets,
 } from "./data/storage.js";
-import { TRACKING_TYPES } from "./data/seed.js";
+import { initialData, TRACKING_TYPES } from "./data/seed.js";
 import { getExerciseMedia } from "./domain/exerciseMedia.js";
 import {
   FREE_WORKOUT_GROUP_ID,
@@ -828,6 +828,7 @@ function getExerciseTechniquePayload(exercise, data) {
   const techniqueDescription = exercise?.techniqueDescription ??
     data?.exercises.find((item) => item.id === exercise?.id)?.techniqueDescription ?? "";
   return {
+    exerciseId: exercise?.id,
     name: exercise?.name ?? exercise?.exerciseNameSnapshot ?? "Упражнение",
     mediaUrl: exercise?.mediaUrl ?? "",
     techniqueDescription,
@@ -4558,6 +4559,7 @@ function ActiveWorkoutScreen({
   const exerciseFromBase = data?.exercises?.find((exercise) => exercise.id === exerciseLog.exerciseId) ?? null;
   const exerciseMediaUrl = (exerciseLog.mediaUrl || exerciseFromBase?.mediaUrl || "").trim();
   const techniqueExercise = {
+    id: exerciseLog.exerciseId,
     name: exerciseLog.exerciseNameSnapshot,
     mediaUrl: exerciseMediaUrl,
     techniqueDescription: exerciseFromBase?.techniqueDescription ?? "",
@@ -6462,6 +6464,9 @@ function ImportOptionsDialog({ draft, onClose, onImport }) {
 function ExerciseTechniqueSheet({ viewer, onClose }) {
   const media = getExerciseMedia(viewer.mediaUrl);
   const steps = getTechniqueSteps(viewer.techniqueDescription);
+  const showsDefaultVideo = media.type === "youtube" && initialData.exercises.some(
+    (exercise) => exercise.id === viewer.exerciseId && exercise.mediaUrl === viewer.mediaUrl,
+  );
 
   return (
     <BottomSheet
@@ -6476,6 +6481,11 @@ function ExerciseTechniqueSheet({ viewer, onClose }) {
             <h2>{viewer.name}</h2>
           </div>
           <ExerciseTechniqueMedia key={viewer.mediaUrl} media={media} name={viewer.name} />
+          {showsDefaultVideo && (
+            <p className="exercise-technique-note">
+              По умолчанию подгружен ролик из открытого доступа YouTube. Вы можете указать ссылку на любое другое видео в настройках упражнения.
+            </p>
+          )}
           {steps.length ? <ExerciseTechniqueSteps steps={steps} /> : null}
         </div>
       </div>
