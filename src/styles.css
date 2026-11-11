@@ -2586,7 +2586,7 @@ button.journal-card:active {
 .notice-error {
   border-color: var(--danger);
   background: var(--danger);
-  color: var(--text);
+  color: #fff;
 }
 
 .bottom-nav {
