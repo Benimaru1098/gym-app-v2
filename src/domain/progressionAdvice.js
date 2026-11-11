@@ -1,13 +1,11 @@
 import { collectExerciseLogEntries } from "./selectors.js";
+import { t } from "../i18n/index.js";
 
 const HISTORY_LIMIT = 5;
 const MIN_TARGET_REPS = 8;
 const MAX_TARGET_REPS = 12;
 const LONG_BREAK_DAYS = 21;
 const SAME_WEIGHT_EPSILON = 0.001;
-
-const INSUFFICIENT_HISTORY_ADVICE =
-  "Данных не достаточно для совета, выполни это упражнение хотя бы 2 раза.";
 
 function parseWeightKg(value) {
   if (typeof value === "number") {
@@ -217,10 +215,6 @@ function getCurrentExercisePosition(session, exerciseIndex, exerciseLog) {
   };
 }
 
-function getIncreaseAdvice() {
-  return "Попробуй +20% к рабочему весу в подходах на 8–10 повторов.";
-}
-
 function isLongBreak(lastPerformance, now) {
   const nowDate = now instanceof Date ? now : new Date(now);
   const daysSinceLast = (nowDate.getTime() - lastPerformance.date.getTime()) / 86400000;
@@ -371,13 +365,13 @@ export function buildProgressionAdvice({ data, session, exerciseIndex, now = new
   const exerciseLog = session?.exerciseLogs?.[exerciseIndex];
 
   if (!exerciseLog?.exerciseId) {
-    return { text: INSUFFICIENT_HISTORY_ADVICE, type: "insufficient-history" };
+    return { text: t("domain:advice.insufficientHistory"), type: "insufficient-history" };
   }
 
   const history = collectExerciseHistory(data, exerciseLog.exerciseId);
 
   if (history.length < 2) {
-    return { text: INSUFFICIENT_HISTORY_ADVICE, type: "insufficient-history" };
+    return { text: t("domain:advice.insufficientHistory"), type: "insufficient-history" };
   }
 
   const last = history[0];
@@ -386,118 +380,118 @@ export function buildProgressionAdvice({ data, session, exerciseIndex, now = new
 
   if (isLongBreak(last, now)) {
     return {
-      text: "Был большой перерыв. Повтори прошлый вес или немного снизь нагрузку.",
+      text: t("domain:advice.longBreak"),
       type: "long-break",
     };
   }
 
   if (isCurrentPositionMuchLater(currentPosition, last)) {
     return {
-      text: "Сегодня упражнение стоит позже, поэтому закрепи текущий вес.",
+      text: t("domain:advice.laterPosition"),
       type: "later-position",
     };
   }
 
   if (wasWeightRecentlyRaised(last, previous) && last.workingRepsMax <= 5) {
     return {
-      text: "Вернись к прошлому весу и снова добери повторы.",
+      text: t("domain:advice.increaseTooHeavy"),
       type: "increase-too-heavy",
     };
   }
 
   if (wasWeightRaisedIntoTargetRange(last, previous)) {
     return {
-      text: "Оставь текущий вес и попробуй добавить 1 повтор.",
+      text: t("domain:advice.addRep"),
       type: "increase-normal-drop",
     };
   }
 
   if (wasLastWorkoutNoticeablyWeak(history)) {
     return {
-      text: "В прошлый раз результат просел. Начни с последнего веса, на котором получалось 8–10 повторов.",
+      text: t("domain:advice.lastWorkoutWeaker"),
       type: "last-workout-weaker",
     };
   }
 
   if (hasRepeatedBelowRange(history)) {
     return {
-      text: "Вес пока тяжёлый. Вернись к нагрузке, с которой получится 8–10 повторов.",
+      text: t("domain:advice.repeatedBelowRange"),
       type: "repeated-below-range",
     };
   }
 
   if (last.workingRepsMax <= 5) {
     return {
-      text: "Лучше вернуться к весу, с которым получится 8–10 повторов.",
+      text: t("domain:advice.stronglyBelowRange"),
       type: "strongly-below-range",
     };
   }
 
   if (last.workingRepsMax <= 7) {
     return {
-      text: "Оставь текущий рабочий вес и попробуй выйти хотя бы на 8 повторов.",
+      text: t("domain:advice.belowRange"),
       type: "below-range",
     };
   }
 
   if (last.hasSharpDrop) {
     return {
-      text: "Попробуй дольше отдыхать между тяжёлыми подходами или не доводить первый тяжёлый подход до полного отказа.",
+      text: t("domain:advice.sharpSetDrop"),
       type: "sharp-set-drop",
     };
   }
 
   if (hasUnstableUpperRange(last)) {
     return {
-      text: "Оставь этот вес и попробуй сделать тяжёлые подходы ровнее, хотя бы 10 повторов.",
+      text: t("domain:advice.unstableUpperRange"),
       type: "unstable-upper-range",
     };
   }
 
   if (isUpperRangeStable(history)) {
     return {
-      text: getIncreaseAdvice(),
+      text: t("domain:advice.stableUpperRange"),
       type: "stable-upper-range",
     };
   }
 
   if (isUpperRangeReached(last)) {
     return {
-      text: "Верх диапазона уже близко. Повтори текущие показатели и закрепи результат.",
+      text: t("domain:advice.upperRangeReached"),
       type: "upper-range-reached",
     };
   }
 
   if (isResultFalling(history)) {
     return {
-      text: "Повтори прошлый вес или немного снизь нагрузку, если снова не получится выйти к 8 повторениям.",
+      text: t("domain:advice.fallingResult"),
       type: "falling-result",
     };
   }
 
   if (isResultStagnant(history)) {
     return {
-      text: "Оставь вес и попробуй добавить 1 повтор хотя бы в одном тяжёлом подходе.",
+      text: t("domain:advice.stagnantResult"),
       type: "stagnant-result",
     };
   }
 
   if (isInWorkingRepRange(last)) {
     return {
-      text: "Оставь текущий вес и попробуй добавить 1 повтор.",
+      text: t("domain:advice.addRep"),
       type: "working-range",
     };
   }
 
   if (isCurrentPositionMuchEarlier(currentPosition, last)) {
     return {
-      text: "Сегодня упражнение стоит раньше, попробуй улучшить результат.",
+      text: t("domain:advice.earlierPosition"),
       type: "earlier-position",
     };
   }
 
   return {
-    text: "Повтори текущий вес и ориентируйся на ровные рабочие подходы.",
+    text: t("domain:advice.default"),
     type: "default",
   };
 }

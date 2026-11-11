@@ -1,9 +1,11 @@
-import { collectExerciseLogEntries, getWorkoutLogExerciseKey } from "../domain/selectors.js";
+import { collectExerciseLogEntries, getTemplateSnapshots, getWorkoutLogExerciseKey } from "../domain/selectors.js";
 import {
   STANDARD_TEMPLATE_NAME,
   getStandardTemplateId,
   isProtectedTemplate,
 } from "../domain/templateRules.js";
+import { localizeTemplateName } from "../i18n/catalog.js";
+import { APP_LANGUAGES } from "../i18n/index.js";
 import { SCHEMA_VERSION, createInitialData, initialData } from "./seed.js";
 import techniqueCatalog from "./exercise-techniques.json" with { type: "json" };
 import legacyTechniqueFingerprints from "./legacy-technique-fingerprints.json" with { type: "json" };
@@ -92,16 +94,27 @@ function normalizeExerciseTemplate(template) {
   const normalizedTemplate = { ...template };
 
   delete normalizedTemplate.isDefault;
+  delete normalizedTemplate.isProtected;
 
-  const isProtected = isProtectedTemplate(normalizedTemplate);
+  const isSystem = isProtectedTemplate(normalizedTemplate);
 
   return {
     ...normalizedTemplate,
-    name: isProtected ? STANDARD_TEMPLATE_NAME : template.name,
-    isArchived: isProtected ? false : Boolean(template.isArchived),
-    isSystem: isProtected ? true : Boolean(template.isSystem),
+    name: isSystem ? STANDARD_TEMPLATE_NAME : template.name,
+    isArchived: !isSystem && Boolean(template.isArchived),
+    isSystem,
     usageCount: Number(template.usageCount ?? 0),
   };
+}
+
+function getTemplateNameKeys(template) {
+  if (typeof template.name !== "string") {
+    return [];
+  }
+
+  return APP_LANGUAGES.map(({ code }) =>
+    localizeTemplateName(template.id, template.name, code).normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase(),
+  );
 }
 
 function isLegacyDefaultTechnique(exerciseId, description) {
@@ -173,60 +186,63 @@ function haveDifferentTemplateData(firstTemplate, secondTemplate) {
   return JSON.stringify(firstTemplate) !== JSON.stringify(secondTemplate);
 }
 
-function withSystemTemplates(templates) {
+function isAvailableTemplateExercise(exercise, muscleGroupId) {
+  return Boolean(exercise && !exercise.isArchived && exercise.muscleGroupId === muscleGroupId);
+}
+
+function withSystemTemplates(templates, exercisesById) {
   const templatesById = new Map(templates.map((template) => [template.id, template]));
 
   for (const standardTemplate of getInitialStandardTemplates()) {
     const existingTemplate = templatesById.get(standardTemplate.id);
+    const fallbackExerciseIds = exercisesById && existingTemplate?.exerciseIds === undefined
+      ? standardTemplate.exerciseIds.filter((id) =>
+          isAvailableTemplateExercise(exercisesById.get(id), standardTemplate.muscleGroupId),
+        )
+      : standardTemplate.exerciseIds;
 
-    templatesById.set(
-      standardTemplate.id,
-      normalizeExerciseTemplate({
-        ...standardTemplate,
-        ...existingTemplate,
-        id: standardTemplate.id,
-        muscleGroupId: standardTemplate.muscleGroupId,
-        isArchived: false,
-        isSystem: true,
-      }),
-    );
+    templatesById.set(standardTemplate.id, {
+      ...standardTemplate,
+      exerciseIds: fallbackExerciseIds,
+      ...existingTemplate,
+      muscleGroupId: standardTemplate.muscleGroupId,
+    });
   }
 
   return [...templatesById.values()].map(normalizeExerciseTemplate);
 }
 
 async function ensureSystemTemplates(database) {
-  const templates = await readStore(database, "exerciseTemplates");
-  const metadata = await readMetadata(database);
-  const normalizedTemplates = withSystemTemplates(templates);
-
-  const existingTemplatesById = new Map(templates.map((template) => [template.id, template]));
-  const hasChanges =
-    normalizedTemplates.length !== templates.length ||
-    normalizedTemplates.some((template) =>
-      haveDifferentTemplateData(existingTemplatesById.get(template.id), template),
-    );
-
-  if (!hasChanges) {
-    return;
-  }
-
   const transaction = database.transaction(["metadata", "exerciseTemplates"], "readwrite");
   const done = transactionDone(transaction);
   const templateStore = transaction.objectStore("exerciseTemplates");
+  const metadataStore = transaction.objectStore("metadata");
 
-  for (const template of normalizedTemplates) {
-    templateStore.put(template);
-  }
-
-  transaction.objectStore("metadata").put({
-    id: "app",
-    schemaVersion: SCHEMA_VERSION,
-    createdAt: metadata?.createdAt ?? new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+  const updateTemplates = Promise.all([
+    requestToPromise(templateStore.getAll()),
+    requestToPromise(metadataStore.get("app")),
+  ]).then(([templates, metadata]) => {
+    const existingById = new Map(templates.map((template) => [template.id, template]));
+    const changedTemplates = withSystemTemplates(templates).filter((template) =>
+      haveDifferentTemplateData(existingById.get(template.id), template),
+    );
+    if (!changedTemplates.length) {
+      return;
+    }
+    for (const template of changedTemplates) {
+      templateStore.put(template);
+    }
+    const now = new Date().toISOString();
+    metadataStore.put({
+      ...metadata,
+      id: "app",
+      schemaVersion: SCHEMA_VERSION,
+      createdAt: metadata?.createdAt ?? now,
+      updatedAt: now,
+    });
   });
 
-  await done;
+  await Promise.all([updateTemplates, done]);
 }
 
 async function seedDatabase(database) {
@@ -388,21 +404,96 @@ function normalizeImportedRecord(record, storeName) {
   return cloneJsonValue(record);
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isOptionalText(value) {
+  return value == null || typeof value === "string";
+}
+
+function isOptionalNumberOrText(value) {
+  return isOptionalText(value) || typeof value === "number";
+}
+
+function hasOptionalTextFields(record, fields) {
+  return isRecord(record) && fields.every((field) => isOptionalText(record[field]));
+}
+
+function isOptionalArrayOf(value, isValidItem) {
+  return value == null || (Array.isArray(value) && value.every(isValidItem));
+}
+
+function isValidLogSection(section) {
+  return hasOptionalTextFields(section, [
+    "id", "name", "muscleGroupId", "muscleGroupNameSnapshot",
+    "templateId", "exerciseTemplateId", "templateName", "templateNameSnapshot", "exerciseTemplateName",
+  ]) &&
+    (section.muscleGroup == null || hasOptionalTextFields(section.muscleGroup, ["id", "name"])) &&
+    (section.template == null || hasOptionalTextFields(section.template, ["id"]));
+}
+
+function isValidExerciseLog(exercise) {
+  return isValidLogSection(exercise) &&
+    hasOptionalTextFields(exercise, [
+      "exerciseId", "exerciseName", "exerciseNameSnapshot",
+      "plannedExerciseId", "plannedExerciseName", "plannedExerciseNameSnapshot",
+    ]) &&
+    (exercise.replacement == null ||
+      hasOptionalTextFields(exercise.replacement, ["plannedExerciseId", "plannedExerciseNameSnapshot"])) &&
+    isOptionalArrayOf(exercise.sets, (set) =>
+      isRecord(set) && [set.setNumber, set.weightKg, set.reps].every(isOptionalNumberOrText),
+    );
+}
+
+function isValidTemplateSnapshot(template) {
+  return isValidLogSection(template) &&
+    isOptionalArrayOf(template.exerciseNames, isOptionalText) &&
+    isOptionalArrayOf(template.exercises, (exercise) =>
+      typeof exercise === "string" ||
+      hasOptionalTextFields(exercise, ["id", "exerciseId", "name", "exerciseName", "exerciseNameSnapshot"]),
+    );
+}
+
+function validateImportedWorkoutLog(log) {
+  const { workoutGroupSnapshot, muscleGroupSnapshots, templateSnapshots, muscleGroupLogs, exerciseLogs } = log;
+  if (
+    !hasOptionalTextFields(log, ["workoutGroupId", "workoutGroupNameSnapshot"]) ||
+    !isOptionalNumberOrText(log.date) ||
+    !isOptionalNumberOrText(log.completedAt) ||
+    (workoutGroupSnapshot != null && (
+      !hasOptionalTextFields(workoutGroupSnapshot, ["id", "workoutGroupId", "name"]) ||
+      !isOptionalArrayOf(workoutGroupSnapshot.muscleGroupIds, (id) => typeof id === "string")
+    )) ||
+    !isOptionalArrayOf(muscleGroupSnapshots, isValidLogSection) ||
+    (templateSnapshots != null && !Array.isArray(templateSnapshots) && !isRecord(templateSnapshots)) ||
+    !getTemplateSnapshots(log).every(isValidTemplateSnapshot) ||
+    !isOptionalArrayOf(muscleGroupLogs, (group) =>
+      isValidLogSection(group) && isOptionalArrayOf(group.exerciseLogs, isValidExerciseLog),
+    ) ||
+    !isOptionalArrayOf(exerciseLogs, isValidExerciseLog)
+  ) {
+    throw new ImportSelectionError("import.invalidWorkoutLogs");
+  }
+  return log;
+}
+
 const importNormalizers = {
   exercises: normalizeExercise,
   exerciseTemplates: normalizeExerciseTemplate,
   workoutGroups: normalizeWorkoutGroup,
+  workoutLogs: validateImportedWorkoutLog,
 };
 
 export class ImportSelectionError extends Error {}
 
-function validateImportSelection(data, selected) {
+function validateImportSelection(data, selected, exercisesById) {
   const muscleGroupIds = new Set(data.muscleGroups.map((group) => group.id));
 
   if (selected.has("exercises") && data.exercises.some(
     (exercise) => !exercise.isArchived && !muscleGroupIds.has(exercise.muscleGroupId),
   )) {
-    throw new ImportSelectionError("В базе из файла есть упражнения для неизвестных групп мышц.");
+    throw new ImportSelectionError("import.unknownExerciseGroups");
   }
 
   if (selected.has("exerciseTemplates") && data.exerciseTemplates.some(
@@ -410,27 +501,30 @@ function validateImportSelection(data, selected) {
       template.id !== getStandardTemplateId(template.muscleGroupId) &&
       !muscleGroupIds.has(template.muscleGroupId),
   )) {
-    throw new ImportSelectionError("В файле есть шаблоны для неизвестных групп мышц.");
+    throw new ImportSelectionError("import.unknownTemplateGroups");
   }
 
   if (selected.has("workoutGroups") && data.workoutGroups.some(
     (group) => group.muscleGroupIds.some((id) => !muscleGroupIds.has(id)),
   )) {
-    throw new ImportSelectionError("В файле есть тренировочные дни с неизвестными группами мышц.");
+    throw new ImportSelectionError("import.unknownTrainingDayGroups");
   }
 
-  if (selected.has("exercises") !== selected.has("exerciseTemplates")) {
-    const exercisesById = new Map(data.exercises.map((exercise) => [exercise.id, exercise]));
-    const hasUnavailableExercises = data.exerciseTemplates.some((template) =>
-      !template.isArchived && template.exerciseIds?.some((id) => {
-        const exercise = exercisesById.get(id);
-        return !exercise || exercise.isArchived || exercise.muscleGroupId !== template.muscleGroupId;
-      }),
-    );
+  if (!exercisesById) {
+    return;
+  }
 
-    if (hasUnavailableExercises) {
-      throw new ImportSelectionError("В шаблонах есть упражнения, которых нет в выбранной базе. Отметьте базу упражнений и шаблоны вместе.");
-    }
+  const activeTemplates = data.exerciseTemplates.filter((template) => !template.isArchived);
+  if (activeTemplates.some((template) => !Array.isArray(template.exerciseIds))) {
+    throw new ImportSelectionError("import.invalidTemplateExercises");
+  }
+
+  const hasUnavailableExercises = activeTemplates.some((template) =>
+    template.exerciseIds.some((id) => !isAvailableTemplateExercise(exercisesById.get(id), template.muscleGroupId)),
+  );
+  if (hasUnavailableExercises) {
+    const importsBoth = selected.has("exercises") && selected.has("exerciseTemplates");
+    throw new ImportSelectionError(importsBoth ? "import.invalidTemplateExercises" : "import.unavailableTemplateExercises");
   }
 }
 
@@ -452,7 +546,7 @@ export async function importAppData(payload, { selectedStores = IMPORT_STORE_NAM
   const importedStores = IMPORT_STORE_NAMES.filter((storeName) => selected.has(storeName));
 
   if (!importedStores.length || importedStores.length !== selected.size) {
-    throw new ImportSelectionError("Выберите хотя бы один раздел для импорта.");
+    throw new ImportSelectionError("import.noSections");
   }
 
   const isFullImport = importedStores.length === IMPORT_STORE_NAMES.length;
@@ -481,10 +575,13 @@ export async function importAppData(payload, { selectedStores = IMPORT_STORE_NAM
       ]);
       data.muscleGroups = muscleGroups;
 
+      const exercisesById = selected.has("exercises") || selected.has("exerciseTemplates")
+        ? new Map(data.exercises.map((exercise) => [exercise.id, exercise]))
+        : null;
       if (selected.has("exerciseTemplates")) {
-        data.exerciseTemplates = withSystemTemplates(data.exerciseTemplates);
+        data.exerciseTemplates = withSystemTemplates(data.exerciseTemplates, exercisesById);
       }
-      validateImportSelection(data, selected);
+      validateImportSelection(data, selected, exercisesById);
 
       const storesToWrite = new Set(importedStores);
 
@@ -635,21 +732,44 @@ export async function saveExerciseTemplate(template) {
   const database = await openAppDatabase();
 
   try {
-    const metadata = await readMetadata(database);
-    const normalizedTemplate = normalizeExerciseTemplate(template);
     const transaction = database.transaction(["metadata", "exerciseTemplates"], "readwrite");
     const done = transactionDone(transaction);
+    const templateStore = transaction.objectStore("exerciseTemplates");
+    const metadataStore = transaction.objectStore("metadata");
 
-    transaction.objectStore("exerciseTemplates").put(normalizedTemplate);
+    const saveTemplate = Promise.all([
+      requestToPromise(templateStore.getAll()),
+      requestToPromise(metadataStore.get("app")),
+    ]).then(([templates, metadata]) => {
+      const existing = templates.find((item) => item.id === template.id);
+      const record = normalizeExerciseTemplate({ ...existing, ...template });
+      const previousNames = existing && existing.muscleGroupId === record.muscleGroupId
+        ? getTemplateNameKeys(existing)
+        : [];
+      const newNames = getTemplateNameKeys(record).filter((name) => !previousNames.includes(name));
+      const hasDuplicateName = newNames.length > 0 && templates.some((item) =>
+        item.id !== record.id && !item.isArchived && item.muscleGroupId === record.muscleGroupId &&
+        getTemplateNameKeys(item).some((name) => newNames.includes(name)),
+      );
 
-    transaction.objectStore("metadata").put({
-      id: "app",
-      schemaVersion: SCHEMA_VERSION,
-      createdAt: metadata?.createdAt ?? new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      if (hasDuplicateName) {
+        return { status: "duplicate" };
+      }
+
+      const now = new Date().toISOString();
+      templateStore.put(record);
+      metadataStore.put({
+        ...metadata,
+        id: "app",
+        schemaVersion: SCHEMA_VERSION,
+        createdAt: metadata?.createdAt ?? now,
+        updatedAt: now,
+      });
+      return { status: "saved" };
     });
 
-    await done;
+    const [result] = await Promise.all([saveTemplate, done]);
+    return result;
   } finally {
     database.close();
   }
@@ -1034,7 +1154,7 @@ function getWorkoutLogTemplateIds(log) {
     }
   };
 
-  (log.templateSnapshots ?? []).forEach((template) => addTemplateId(template.id));
+  getTemplateSnapshots(log).forEach((template) => addTemplateId(template?.id ?? template?.templateId));
   (log.muscleGroupLogs ?? []).forEach((muscleGroupLog) => addTemplateId(muscleGroupLog.templateId));
   (log.exerciseLogs ?? []).forEach((exerciseLog) => addTemplateId(exerciseLog.templateId));
 

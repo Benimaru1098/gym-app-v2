@@ -13,10 +13,6 @@ export function getStandardTemplateId(muscleGroupId) {
   return STANDARD_TEMPLATE_ID_BY_MUSCLE_GROUP_ID[muscleGroupId] ?? null;
 }
 
-export function isStandardTemplate(template) {
-  return Boolean(template?.id && template.id === getStandardTemplateId(template.muscleGroupId));
-}
-
 export function isProtectedTemplate(template) {
-  return Boolean(template?.isSystem || isStandardTemplate(template));
+  return Boolean(template?.id && template.id === getStandardTemplateId(template.muscleGroupId));
 }

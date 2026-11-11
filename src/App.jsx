@@ -1,5 +1,6 @@
 import { animate, AnimatePresence, LayoutGroup, mix, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   clearWorkoutLogs,
   deleteActiveWorkoutSessionsForWorkoutGroup,
@@ -24,7 +25,6 @@ import { initialData, TRACKING_TYPES } from "./data/seed.js";
 import { getExerciseMedia } from "./domain/exerciseMedia.js";
 import {
   FREE_WORKOUT_GROUP_ID,
-  FREE_WORKOUT_NAME,
   buildActiveWorkoutSessionDraft,
   buildExerciseEditingData,
   buildExerciseHistory,
@@ -47,16 +47,28 @@ import {
   indexById,
 } from "./domain/selectors.js";
 import { buildProgressionAdvice } from "./domain/progressionAdvice.js";
-import { STANDARD_TEMPLATE_NAME, isProtectedTemplate } from "./domain/templateRules.js";
+import { isProtectedTemplate } from "./domain/templateRules.js";
+import {
+  getStoredTechniqueDescription,
+  localizeAppData,
+  localizeExercise,
+  localizeExerciseName,
+  localizeMuscleGroupName,
+  localizeTemplateName,
+} from "./i18n/catalog.js";
+import { i18n, t } from "./i18n/index.js";
 import { icon } from "./ui/icons.js";
+import LanguageSettings from "./ui/LanguageSettings.jsx";
 import ModalDialog, { ConfirmationActions } from "./ui/ModalDialog.jsx";
+import SettingsToggle, { settingsToggleTransition } from "./ui/SettingsToggle.jsx";
+import WeightUnitSettings, { useWeightUnit } from "./ui/WeightUnitSettings.jsx";
 import editIconSrc from "./assets/icons/edit.svg";
 import "./styles.css";
 
 const TABS = [
-  { id: "home", label: "Главная", icon: "home" },
-  { id: "plan", label: "План", icon: "plan" },
-  { id: "journal", label: "Журнал", icon: "journal" },
+  { id: "home", labelKey: "nav.home", icon: "home" },
+  { id: "plan", labelKey: "nav.plan", icon: "plan" },
+  { id: "journal", labelKey: "nav.journal", icon: "journal" },
 ];
 
 const workoutIllustrationModules = import.meta.glob("./assets/illustrations/*.svg", {
@@ -88,10 +100,10 @@ const NOTICE_DURATION_MS = 2600;
 const MAX_VISIBLE_NOTICES = 3;
 const JOURNAL_PAGE_SIZE = 25;
 const IMPORT_OPTIONS = {
-  exercises: "База упражнений",
-  exerciseTemplates: "Шаблоны упражнений",
-  workoutGroups: "Тренировочные дни",
-  workoutLogs: "Завершённые тренировки",
+  exercises: "import.exercises",
+  exerciseTemplates: "import.exerciseTemplates",
+  workoutGroups: "import.workoutGroups",
+  workoutLogs: "import.workoutLogs",
 };
 const OVERLAYS = {
   activeExerciseReplacement: "activeExerciseReplacement",
@@ -100,10 +112,12 @@ const OVERLAYS = {
   importData: "importData",
   templateSelector: "templateSelector",
 };
-const RESTART_WORKOUT_CONFIRMATION = {
-  title: "Начать новую тренировку?",
-  message: "Текущая незавершённая тренировка будет удалена.",
-};
+function getRestartWorkoutConfirmation() {
+  return {
+    title: t("confirm.restartTitle"),
+    message: t("confirm.restartMessage"),
+  };
+}
 
 const screenMotionVariants = {
   initial: (mode) => {
@@ -474,27 +488,22 @@ function getLocalBackTarget(appState) {
   return null;
 }
 
-function pluralRu(value, one, few, many) {
-  const number = Math.abs(value);
-  const lastTwo = number % 100;
-  const last = number % 10;
+const dateFormattersByLanguage = new Map();
 
-  if (lastTwo >= 11 && lastTwo <= 14) {
-    return many;
+function getDateFormatters() {
+  const language = i18n.resolvedLanguage;
+  if (!dateFormattersByLanguage.has(language)) {
+    const dayMonth = { day: "numeric", month: "long" };
+    dateFormattersByLanguage.set(language, {
+      numeric: new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit", year: "numeric" }),
+      dayMonth: new Intl.DateTimeFormat(language, dayMonth),
+      dayMonthYear: new Intl.DateTimeFormat(language, { ...dayMonth, year: "numeric" }),
+    });
   }
-
-  if (last === 1) {
-    return one;
-  }
-
-  if (last >= 2 && last <= 4) {
-    return few;
-  }
-
-  return many;
+  return dateFormattersByLanguage.get(language);
 }
 
-function formatNumericDate(dateValue, emptyLabel = "ещё не было") {
+function formatNumericDate(dateValue, emptyLabel = t("format.noPrevious")) {
   if (!dateValue) {
     return emptyLabel;
   }
@@ -504,13 +513,10 @@ function formatNumericDate(dateValue, emptyLabel = "ещё не было") {
     return emptyLabel;
   }
 
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-
-  return `${day}.${month}.${date.getFullYear()}`;
+  return getDateFormatters().numeric.format(date);
 }
 
-function formatRelativeDate(dateValue, emptyLabel = "ещё не было") {
+function formatRelativeDate(dateValue, emptyLabel = t("format.noPrevious")) {
   if (!dateValue) {
     return emptyLabel;
   }
@@ -526,15 +532,15 @@ function formatRelativeDate(dateValue, emptyLabel = "ещё не было") {
   const diffDays = Math.round((startOfToday - startOfDate) / 86400000);
 
   if (diffDays <= 0) {
-    return "сегодня";
+    return t("format.today");
   }
 
   if (diffDays === 1) {
-    return "вчера";
+    return t("format.yesterday");
   }
 
   if (diffDays <= 7) {
-    return `${diffDays} ${pluralRu(diffDays, "день", "дня", "дней")} назад`;
+    return t("format.daysAgo", { count: diffDays });
   }
 
   return formatNumericDate(dateValue, emptyLabel);
@@ -542,10 +548,10 @@ function formatRelativeDate(dateValue, emptyLabel = "ещё не было") {
 
 function formatLastWorkoutLabel(dateValue) {
   if (!dateValue) {
-    return "Ещё не было";
+    return t("format.noPreviousCapitalized");
   }
 
-  return `Было: ${formatRelativeDate(dateValue)}`;
+  return t("format.lastWorkout", { date: formatRelativeDate(dateValue) });
 }
 
 function formatWeightInput(weightKg) {
@@ -561,14 +567,14 @@ function formatWeightValue(weightKg) {
 
 function formatLastSetsResult(lastSets) {
   if (!lastSets?.length) {
-    return "последний: ещё не было";
+    return t("format.lastSetsEmpty");
   }
 
-  return `последний: ${formatSetList(lastSets)}`;
+  return t("format.lastSets", { sets: formatSetList(lastSets) });
 }
 
 function normalizeSearchValue(value) {
-  return String(value ?? "").trim().toLocaleLowerCase("ru-RU");
+  return String(value ?? "").trim().toLocaleLowerCase(i18n.resolvedLanguage);
 }
 
 function matchesSearchValue(value, normalizedQuery) {
@@ -577,34 +583,30 @@ function matchesSearchValue(value, normalizedQuery) {
 
 function formatDate(dateValue) {
   if (!dateValue) {
-    return "Дата не указана";
+    return t("format.dateMissing");
   }
 
   const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) {
-    return "Дата не указана";
+    return t("format.dateMissing");
   }
 
-  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
+  return getDateFormatters().dayMonth.format(date);
 }
 
 function formatJournalDate(dateValue) {
   if (!dateValue) {
-    return "Дата не указана";
+    return t("format.dateMissing");
   }
 
   const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) {
-    return "Дата не указана";
+    return t("format.dateMissing");
   }
 
   const currentYear = new Date().getFullYear();
-  const options =
-    date.getFullYear() === currentYear
-      ? { day: "numeric", month: "long" }
-      : { day: "numeric", month: "long", year: "numeric" };
-
-  return new Intl.DateTimeFormat("ru-RU", options).format(date);
+  const { dayMonth, dayMonthYear } = getDateFormatters();
+  return (date.getFullYear() === currentYear ? dayMonth : dayMonthYear).format(date);
 }
 
 function getJournalDateParts(dateValue) {
@@ -617,7 +619,7 @@ function getJournalDateParts(dateValue) {
     };
   }
 
-  const parts = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).formatToParts(date);
+  const parts = getDateFormatters().dayMonth.formatToParts(date);
 
   return {
     day: parts.find((part) => part.type === "day")?.value ?? "",
@@ -625,23 +627,23 @@ function getJournalDateParts(dateValue) {
   };
 }
 
-function formatWorkoutSet(set) {
+function formatWorkoutSet(set, unit) {
   const hasWeight = set?.weightKg !== undefined && set.weightKg !== null && set.weightKg !== "";
   const hasReps = set?.reps !== undefined && set.reps !== null && set.reps !== "";
 
   if (hasWeight && hasReps) {
-    return `${formatWeightValue(set.weightKg)} кг × ${set.reps}`;
+    return `${formatWeightValue(set.weightKg)} ${unit} × ${set.reps}`;
   }
 
   if (hasWeight) {
-    return `${formatWeightValue(set.weightKg)} кг`;
+    return `${formatWeightValue(set.weightKg)} ${unit}`;
   }
 
   if (hasReps) {
-    return `${set.reps} повт.`;
+    return t("format.repsShort", { reps: set.reps });
   }
 
-  return "не заполнено";
+  return t("format.emptySet");
 }
 
 function formatSetList(sets) {
@@ -655,7 +657,7 @@ function formatSetList(sets) {
     })
     .filter(Boolean);
 
-  return labels.length ? labels.join(" · ") : "ещё не было";
+  return labels.length ? labels.join(" · ") : t("format.noPrevious");
 }
 
 function normalizeWeightInput(value) {
@@ -773,21 +775,10 @@ function formatActiveSetMinutesAgo(addedAt, nowTimestamp) {
   const minutes = Math.max(0, Math.floor((nowTimestamp - date.getTime()) / 60000));
 
   if (minutes === 0) {
-    return "меньше минуты назад";
+    return t("format.lessThanMinute");
   }
 
-  const lastTwoDigits = minutes % 100;
-  const lastDigit = minutes % 10;
-  const unit =
-    lastTwoDigits >= 11 && lastTwoDigits <= 14
-      ? "минут"
-      : lastDigit === 1
-        ? "минуту"
-        : lastDigit >= 2 && lastDigit <= 4
-          ? "минуты"
-          : "минут";
-
-  return `${minutes} ${unit} назад`;
+  return t("format.minutesAgo", { count: minutes });
 }
 
 function createEmptyActiveSetRows() {
@@ -826,10 +817,13 @@ function getActiveWorkoutSessionForGroup(appState, workoutGroupId) {
 
 function getExerciseTechniquePayload(exercise, data) {
   const techniqueDescription = exercise?.techniqueDescription ??
-    data?.exercises.find((item) => item.id === exercise?.id)?.techniqueDescription ?? "";
+    localizeExercise(
+      data?.exercises.find((item) => item.id === exercise?.id),
+      i18n.resolvedLanguage,
+    )?.techniqueDescription ?? "";
   return {
     exerciseId: exercise?.id,
-    name: exercise?.name ?? exercise?.exerciseNameSnapshot ?? "Упражнение",
+    name: exercise?.name ?? exercise?.exerciseNameSnapshot ?? t("common.exercise"),
     mediaUrl: exercise?.mediaUrl ?? "",
     techniqueDescription,
   };
@@ -1121,7 +1115,7 @@ function SvgIcon({ name }) {
   return <span className="icon-wrap" dangerouslySetInnerHTML={{ __html: icon(name) }} />;
 }
 
-function InfoNotice({ children, label = "Показать описание" }) {
+function InfoNotice({ children, label = t("common.showDescription") }) {
   const [isOpen, setIsOpen] = useState(false);
   const noticeRef = useRef(null);
 
@@ -1355,7 +1349,10 @@ function EditIconButton({ label, onClick }) {
 }
 
 function App() {
+  const { i18n: translation } = useTranslation("app");
   const [state, setState] = useState(createInitialState);
+  const language = translation.resolvedLanguage;
+  const localizedData = useMemo(() => localizeAppData(state.data, language), [state.data, language]);
   const stateRef = useRef(state);
   const noticeTimersRef = useRef(new Map());
   const deferredInstallPromptRef = useRef(null);
@@ -1470,9 +1467,9 @@ function App() {
       if (!getTechniqueSteps(payload.techniqueDescription).length &&
         (media.type === "empty" || media.type === "invalid")) {
         if (media.type === "invalid") {
-          showNotice("Проверьте ссылку на технику", "error");
+          showNotice(t("notice.invalidTechniqueUrl"), "error");
         } else {
-          showNotice("Техника не добавлена");
+          showNotice(t("notice.noTechnique"));
         }
         return;
       }
@@ -1576,7 +1573,7 @@ function App() {
   useEffect(() => {
     refreshData().catch((error) => {
       console.error(error);
-      patchState({ error: "Не удалось загрузить данные", isLoading: false });
+      patchState({ error: t("notice.loadFailed"), isLoading: false });
     });
   }, [patchState, refreshData]);
 
@@ -1681,7 +1678,7 @@ function App() {
     }
 
     const registerServiceWorker = () => {
-      navigator.serviceWorker.register("./sw.js").catch((error) => {
+      navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch((error) => {
         console.warn("Service worker registration failed", error);
       });
     };
@@ -1767,7 +1764,7 @@ function App() {
   const handleInstallApp = useCallback(async () => {
     const prompt = deferredInstallPromptRef.current;
     if (!prompt) {
-      showNotice("Установка доступна из меню браузера");
+      showNotice(t("notice.installFromBrowser"));
       return;
     }
 
@@ -1840,7 +1837,7 @@ function App() {
       const trainingDay = stateRef.current.data.workoutGroups.find((item) => item.id === trainingDayId);
 
       if (!trainingDay) {
-        showNotice("Тренировочный день не найден", "error");
+        showNotice(t("notice.trainingDayMissing"), "error");
         return;
       }
 
@@ -1871,7 +1868,7 @@ function App() {
       }
 
       if (selectedMuscleGroupIds.length >= 2) {
-        showNotice("Можно выбрать до двух групп мышц", "error");
+        showNotice(t("notice.muscleGroupLimit"), "error");
         return;
       }
 
@@ -1893,7 +1890,7 @@ function App() {
       const selectedMuscleGroupIds = current.trainingDayDraft.selectedMuscleGroupIds;
 
       if (!selectedMuscleGroupIds.length) {
-        showNotice("Выберите хотя бы одну группу мышц", "error");
+        showNotice(t("notice.selectMuscleGroup"), "error");
         return;
       }
 
@@ -1908,7 +1905,7 @@ function App() {
       );
 
       if (hasDuplicate) {
-        showNotice("Такая комбинация уже добавлена", "error");
+        showNotice(t("notice.duplicateTrainingDay"), "error");
         return;
       }
 
@@ -1921,8 +1918,8 @@ function App() {
 
       if (hasActiveWorkout && muscleGroupOrderChanged) {
         const shouldReplaceActiveWorkout = await requestConfirmation({
-          title: "Изменить группы мышц?",
-          message: "При сохранении тренировочного дня незавершённая тренировка будет удалена.",
+          title: t("confirm.changeMusclesTitle"),
+          message: t("confirm.changeMusclesMessage"),
         });
 
         if (!shouldReplaceActiveWorkout) {
@@ -1974,10 +1971,10 @@ function App() {
           },
           { history: "replace", scroll: "restore" },
         );
-        showNotice(existingWorkoutGroup ? "Тренировочный день изменён" : "Тренировочный день добавлен");
+        showNotice(existingWorkoutGroup ? t("notice.trainingDayUpdated") : t("notice.trainingDayCreated"));
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось сохранить тренировочный день", "error");
+        showNotice(t("notice.trainingDaySaveFailed"), "error");
       }
     },
     [navigate, refreshData, requestConfirmation, showNotice],
@@ -1995,10 +1992,10 @@ function App() {
       (session) => session.workoutGroupId === trainingDayId,
     );
     const confirmed = await requestConfirmation({
-      title: "Удалить тренировочный день?",
+      title: t("confirm.deleteTrainingDayTitle"),
       message: hasActiveWorkout
-        ? "Тренировочный день исчезнет с главной. Его незавершённая тренировка тоже будет удалена."
-        : "Тренировочный день исчезнет с главной.",
+        ? t("confirm.deleteTrainingDayWithSession")
+        : t("confirm.deleteTrainingDayMessage"),
     });
 
     if (!confirmed) {
@@ -2027,10 +2024,10 @@ function App() {
         },
         { history: "replace", scroll: "restore" },
       );
-      showNotice(result.status === "missing" ? "Тренировочный день уже удалён" : "Тренировочный день удалён");
+      showNotice(result.status === "missing" ? t("notice.trainingDayAlreadyDeleted") : t("notice.trainingDayDeleted"));
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось удалить тренировочный день", "error");
+      showNotice(t("notice.trainingDayDeleteFailed"), "error");
     }
   }, [navigate, refreshData, requestConfirmation, showNotice]);
 
@@ -2057,12 +2054,12 @@ function App() {
 
   const openTemplateEdit = useCallback(
     (muscleGroupId, templateId) => {
-  const details = buildTemplateEditingData(stateRef.current.data, templateId);
+      const details = buildTemplateEditingData(stateRef.current.data, templateId);
       navigate({
         activeTab: "plan",
         planView: { name: "editTemplate", muscleGroupId, templateId },
         templateDraft: {
-          name: details.template?.name || "",
+          name: null,
           selectedExerciseIds: [...(details.template?.exerciseIds || [])],
         },
       });
@@ -2090,12 +2087,11 @@ function App() {
 
   const openExerciseEdit = useCallback(
     (muscleGroupId, exerciseId) => {
-      const details = buildExerciseEditingData(stateRef.current.data, exerciseId);
       navigate({
         activeTab: "plan",
         planView: { name: "editExercise", muscleGroupId, exerciseId },
         exerciseDraft: {
-          name: details.exercise?.name || "",
+          name: null,
           techniqueSteps: [],
           mediaUrl: "",
         },
@@ -2150,7 +2146,7 @@ function App() {
         closeOverlay(OVERLAYS.templateSelector, { templateSelector: null });
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось выбрать шаблон", "error");
+        showNotice(t("notice.templateSelectFailed"), "error");
       }
     },
     [closeOverlay, refreshData, showNotice],
@@ -2167,7 +2163,7 @@ function App() {
       return activeWorkoutSaveQueueRef.current.catch((error) => {
         console.error(error);
         if (showError) {
-          showNotice("Не удалось сохранить тренировку", "error");
+          showNotice(t("notice.workoutSaveFailed"), "error");
         }
       });
     },
@@ -2211,7 +2207,7 @@ function App() {
       const current = stateRef.current;
       const unfinishedSession = getActiveWorkoutSessionForGroup(current, workoutGroupId);
 
-      if (unfinishedSession && !(await requestConfirmation(RESTART_WORKOUT_CONFIRMATION))) {
+      if (unfinishedSession && !(await requestConfirmation(getRestartWorkoutConfirmation()))) {
         return;
       }
 
@@ -2224,12 +2220,12 @@ function App() {
       );
 
       if (!session) {
-        showNotice("Тренировка не найдена", "error");
+        showNotice(t("notice.workoutMissing"), "error");
         return;
       }
 
       if (!session.exerciseLogs.length) {
-        showNotice("В плане нет упражнений", "error");
+        showNotice(t("notice.emptyWorkoutPlan"), "error");
         return;
       }
 
@@ -2251,10 +2247,10 @@ function App() {
           },
           { history: "push", scroll: "top" },
         );
-        showNotice("Тренировка начата");
+        showNotice(t("notice.workoutStarted"));
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось начать тренировку", "error");
+        showNotice(t("notice.workoutStartFailed"), "error");
       }
     },
     [navigate, refreshData, requestConfirmation, showNotice],
@@ -2266,13 +2262,13 @@ function App() {
       const selectedExerciseIds = current.freeWorkoutDraft.selectedExerciseIds;
 
       if (!selectedExerciseIds.length) {
-        showNotice("Выбери хотя бы одно упражнение", "error");
+        showNotice(t("notice.chooseExercise"), "error");
         return;
       }
 
       const unfinishedSession = getActiveWorkoutSessionForGroup(current, FREE_WORKOUT_GROUP_ID);
 
-      if (unfinishedSession && !(await requestConfirmation(RESTART_WORKOUT_CONFIRMATION))) {
+      if (unfinishedSession && !(await requestConfirmation(getRestartWorkoutConfirmation()))) {
         return;
       }
 
@@ -2285,7 +2281,7 @@ function App() {
       );
 
       if (!session.exerciseLogs.length) {
-        showNotice("Выбери хотя бы одно упражнение", "error");
+        showNotice(t("notice.chooseExercise"), "error");
         return;
       }
 
@@ -2307,10 +2303,10 @@ function App() {
           },
           { history: "push", scroll: "top" },
         );
-        showNotice("Тренировка начата");
+        showNotice(t("notice.workoutStarted"));
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось начать тренировку", "error");
+        showNotice(t("notice.workoutStartFailed"), "error");
       }
     },
     [navigate, refreshData, requestConfirmation, showNotice],
@@ -2324,7 +2320,7 @@ function App() {
         : current.data?.activeWorkoutSessions?.find((item) => item.id === sessionId) ?? null;
 
       if (!session) {
-        showNotice("Незавершённая тренировка не найдена", "error");
+        showNotice(t("notice.unfinishedWorkoutMissing"), "error");
         return;
       }
 
@@ -2451,12 +2447,12 @@ function App() {
       const exercise = current.data?.exercises?.find((item) => item.id === exerciseId && !item.isArchived);
 
       if (!session || !exerciseLog || !exercise) {
-        showNotice("Не удалось заменить упражнение", "error");
+        showNotice(t("notice.exerciseReplaceFailed"), "error");
         return;
       }
 
       if (exercise.muscleGroupId !== exerciseLog.muscleGroupId) {
-        showNotice("Упражнение из другой мышцы", "error");
+        showNotice(t("notice.exerciseWrongGroup"), "error");
         return;
       }
 
@@ -2553,7 +2549,7 @@ function App() {
     const currentSession = getActiveWorkoutSessionFromState(stateRef.current);
 
     if (!currentSession) {
-      showNotice("Активная тренировка не найдена", "error");
+      showNotice(t("notice.activeWorkoutMissing"), "error");
       return;
     }
 
@@ -2577,10 +2573,10 @@ function App() {
         },
         { history: "replace", scroll: "top" },
       );
-      showNotice("Тренировка сохранена");
+      showNotice(t("notice.workoutSaved"));
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось завершить тренировку", "error");
+      showNotice(t("notice.workoutFinishFailed"), "error");
     }
   }, [navigate, refreshData, showNotice]);
 
@@ -2794,37 +2790,40 @@ function App() {
           : buildTemplateCreationData(data, planView.muscleGroupId);
 
       const protectedTemplate = isProtectedTemplate(details.template);
-      const name = protectedTemplate ? details.template.name : templateDraft.name.trim();
+      const existingName = details.template?.name ?? "";
+      const localizedName = localizeTemplateName(details.template?.id, existingName, i18n.resolvedLanguage);
+      const enteredName = templateDraft.name?.trim() ?? localizedName;
+      const name = protectedTemplate || enteredName === localizedName ? existingName : enteredName;
 
       if (!name) {
-        showNotice("Введите название шаблона", "error");
+        showNotice(t("notice.templateNameRequired"), "error");
         return;
       }
 
       if (!templateDraft.selectedExerciseIds.length) {
-        showNotice("Выберите хотя бы одно упражнение", "error");
+        showNotice(t("notice.selectExercise"), "error");
         return;
       }
 
       const template = {
-        ...(details.template || {}),
         id: details.template?.id || createId("template"),
         muscleGroupId: details.template?.muscleGroupId || planView.muscleGroupId,
         name,
         exerciseIds: [...templateDraft.selectedExerciseIds],
-        isArchived: Boolean(details.template?.isArchived),
-        isSystem: Boolean(details.template?.isSystem || name === STANDARD_TEMPLATE_NAME),
-        usageCount: Number(details.template?.usageCount || 0),
       };
 
       try {
-        await saveExerciseTemplate(template);
+        const result = await saveExerciseTemplate(template);
+        if (result.status === "duplicate") {
+          showNotice(t("notice.duplicateTemplateName"), "error");
+          return;
+        }
         await refreshData();
-        showNotice("Шаблон сохранён");
+        showNotice(t("notice.templateSaved"));
         goBack();
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось сохранить шаблон", "error");
+        showNotice(t("notice.templateSaveFailed"), "error");
       }
     },
     [goBack, refreshData, showNotice],
@@ -2840,13 +2839,15 @@ function App() {
     }
 
     if (isProtectedTemplate(details.template)) {
-      showNotice("Шаблон Стандарт нельзя удалить", "error");
+      showNotice(t("notice.standardTemplateProtected"), "error");
       return;
     }
 
     const confirmed = await requestConfirmation({
-      title: "Удалить шаблон?",
-      message: `Шаблон «${details.template.name}» исчезнет из списка.`,
+      title: t("confirm.deleteTemplateTitle"),
+      message: t("confirm.deleteTemplateMessage", {
+        name: localizeTemplateName(details.template.id, details.template.name, i18n.resolvedLanguage),
+      }),
     });
 
     if (!confirmed) {
@@ -2856,11 +2857,11 @@ function App() {
     try {
       const result = await deleteExerciseTemplate(details.template.id);
       await refreshData();
-      showNotice(result.status === "archived" ? "Шаблон архивирован" : "Шаблон удалён");
+      showNotice(result.status === "archived" ? t("notice.templateArchived") : t("notice.templateDeleted"));
       goBack();
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось удалить шаблон", "error");
+      showNotice(t("notice.templateDeleteFailed"), "error");
     }
   }, [goBack, refreshData, requestConfirmation, showNotice]);
 
@@ -2881,17 +2882,21 @@ function App() {
   const handleSaveExercise = useCallback(
     async (event) => {
       event.preventDefault();
-      const { planView, exerciseDraft } = stateRef.current;
+      const { planView, exerciseDraft, data } = stateRef.current;
       const isEdit = planView.name === "editExercise";
-      const name = exerciseDraft.name.trim();
+      const existingExercise = isEdit ? data.exercises.find((item) => item.id === planView.exerciseId) : null;
+      const existingName = existingExercise?.name ?? "";
+      const localizedName = localizeExerciseName(planView.exerciseId, existingName, i18n.resolvedLanguage);
+      const enteredName = exerciseDraft.name?.trim() ?? localizedName;
+      const name = enteredName === localizedName ? existingName : enteredName;
       const mediaUrl = exerciseDraft.mediaUrl.trim();
       if (!name) {
-        showNotice("Введите название упражнения", "error");
+        showNotice(t("notice.exerciseNameRequired"), "error");
         return;
       }
 
       if (!isEdit && getExerciseMedia(mediaUrl).type === "invalid") {
-        showNotice("Вставьте прямую ссылку на GIF или ссылку на видео YouTube", "error");
+        showNotice(t("notice.mediaLinkRequired"), "error");
         return;
       }
 
@@ -2909,15 +2914,15 @@ function App() {
       try {
         const result = await saveExercise(exercise, { updateOnly: isEdit });
         if (result.status === "missing") {
-          showNotice("Упражнение не найдено", "error");
+          showNotice(t("notice.exerciseMissing"), "error");
           return;
         }
         await refreshData();
-        showNotice("Упражнение сохранено");
+        showNotice(t("notice.exerciseSaved"));
         goBack();
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось сохранить упражнение", "error");
+        showNotice(t("notice.exerciseSaveFailed"), "error");
       }
     },
     [goBack, refreshData, showNotice],
@@ -2926,23 +2931,30 @@ function App() {
   const handleSaveExerciseTechnique = useCallback(async (exerciseId, { techniqueDescription, mediaUrl }) => {
     const { exercise } = buildExerciseEditingData(stateRef.current.data, exerciseId);
     if (!exercise) {
-      showNotice("Упражнение не найдено", "error");
+      showNotice(t("notice.exerciseMissing"), "error");
       return;
     }
 
     if (mediaUrl !== exercise.mediaUrl && getExerciseMedia(mediaUrl).type === "invalid") {
-      showNotice("Вставьте прямую ссылку на GIF или ссылку на видео YouTube", "error");
+      showNotice(t("notice.mediaLinkRequired"), "error");
       return;
     }
 
     try {
-      const result = await saveExercise({ id: exerciseId, techniqueDescription, mediaUrl }, { updateOnly: true });
+      const storedDescription = techniqueDescription === exercise.techniqueDescription
+        ? techniqueDescription
+        : getStoredTechniqueDescription(exerciseId, techniqueDescription, i18n.resolvedLanguage);
+      const result = await saveExercise({
+        id: exerciseId,
+        techniqueDescription: storedDescription,
+        mediaUrl,
+      }, { updateOnly: true });
       if (result.status === "missing") {
-        showNotice("Упражнение не найдено", "error");
+        showNotice(t("notice.exerciseMissing"), "error");
         return;
       }
       await refreshData();
-      showNotice("Техника сохранена");
+      showNotice(t("notice.techniqueSaved"));
       const currentView = stateRef.current.planView;
       if (stateRef.current.activeTab === "plan" && currentView.name === "exerciseTechnique" &&
         currentView.exerciseId === exercise.id) {
@@ -2950,7 +2962,7 @@ function App() {
       }
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось сохранить технику", "error");
+      showNotice(t("notice.techniqueSaveFailed"), "error");
     }
   }, [goBack, refreshData, showNotice]);
 
@@ -2964,8 +2976,10 @@ function App() {
     }
 
     const confirmed = await requestConfirmation({
-      title: "Удалить упражнение?",
-      message: `Упражнение «${details.exercise.name}» исчезнет из базы и действующих шаблонов.`,
+      title: t("confirm.deleteExerciseTitle"),
+      message: t("confirm.deleteExerciseMessage", {
+        name: localizeExerciseName(details.exercise.id, details.exercise.name, i18n.resolvedLanguage),
+      }),
     });
 
     if (!confirmed) {
@@ -2975,18 +2989,18 @@ function App() {
     try {
       const result = await deleteExercise(details.exercise.id);
       await refreshData();
-      showNotice(result.status === "archived" ? "Упражнение архивировано" : "Упражнение удалено");
+      showNotice(result.status === "archived" ? t("notice.exerciseArchived") : t("notice.exerciseDeleted"));
       goBack();
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось удалить упражнение", "error");
+      showNotice(t("notice.exerciseDeleteFailed"), "error");
     }
   }, [goBack, refreshData, requestConfirmation, showNotice]);
 
   const handleExportData = useCallback(async () => {
     const confirmed = await requestConfirmation({
-      title: "Экспортировать данные?",
-      message: "Будет скачан JSON-файл с данными приложения.",
+      title: t("confirm.exportTitle"),
+      message: t("confirm.exportMessage"),
       danger: false,
     });
 
@@ -3004,10 +3018,10 @@ function App() {
       link.download = `gym-app-data-${dateStamp}.json`;
       link.click();
       URL.revokeObjectURL(url);
-      showNotice("Экспорт подготовлен");
+      showNotice(t("notice.exportPrepared"));
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось экспортировать данные", "error");
+      showNotice(t("notice.exportFailed"), "error");
     }
   }, [requestConfirmation, showNotice]);
 
@@ -3048,7 +3062,7 @@ function App() {
       } catch (error) {
         console.error(error);
         if (pendingImportFileRef.current === file) {
-          showNotice("Не удалось прочитать файл импорта. Выберите JSON-файл, созданный при экспорте.", "error");
+          showNotice(t("notice.importFileInvalid"), "error");
         }
       } finally {
         if (pendingImportFileRef.current === file) {
@@ -3098,13 +3112,13 @@ function App() {
           trainingDayDraft: { id: null, selectedMuscleGroupIds: [] },
         });
         closeImportOptions();
-        showNotice("Данные импортированы");
+        showNotice(t("notice.importSucceeded"));
       } catch (error) {
         console.error(error);
         patchState({
           importDraft: {
             ...draft,
-            error: error instanceof ImportSelectionError ? error.message : "Не удалось импортировать данные из файла.",
+            error: error instanceof ImportSelectionError ? t(error.message) : t("import.failed"),
           },
         });
       }
@@ -3114,8 +3128,8 @@ function App() {
 
   const handleClearWorkouts = useCallback(async () => {
     const confirmed = await requestConfirmation({
-      title: "Очистить журнал?",
-      message: "Все завершённые тренировки будут удалены.",
+      title: t("confirm.clearWorkoutsTitle"),
+      message: t("confirm.clearWorkoutsMessage"),
     });
 
     if (!confirmed) {
@@ -3125,10 +3139,10 @@ function App() {
     try {
       await clearWorkoutLogs();
       await refreshData();
-      showNotice("Тренировки очищены");
+      showNotice(t("notice.workoutsCleared"));
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось очистить тренировки", "error");
+      showNotice(t("notice.workoutsClearFailed"), "error");
     }
   }, [refreshData, requestConfirmation, showNotice]);
 
@@ -3137,7 +3151,7 @@ function App() {
       const result = await saveWorkoutLogSets(originalLog, changes);
 
       if (result.status === "invalid") {
-        showNotice("Проверь вес и повторы. Вес может быть дробным, повторы должны быть целым числом.", "error");
+        showNotice(t("notice.invalidSetNumbers"), "error");
         return false;
       }
 
@@ -3151,16 +3165,16 @@ function App() {
       }));
 
       if (result.status === "changed") {
-        showNotice("Запись уже изменилась. Открыта актуальная версия.", "error");
+        showNotice(t("notice.logUpdatedElsewhere"), "error");
       } else if (result.status === "missing") {
-        showNotice("Запись уже удалена", "error");
+        showNotice(t("notice.logAlreadyDeleted"), "error");
       } else {
-        showNotice("Изменения сохранены");
+        showNotice(t("notice.logChangesSaved"));
       }
       return true;
     } catch (error) {
       console.error(error);
-      showNotice("Не удалось сохранить изменения", "error");
+      showNotice(t("notice.logSaveFailed"), "error");
       return false;
     }
   }, [patchState, showNotice]);
@@ -3172,8 +3186,8 @@ function App() {
       }
 
       const confirmed = await requestConfirmation({
-        title: "Удалить тренировку из журнала?",
-        message: "Запись о тренировке и все её подходы будут удалены.",
+        title: t("confirm.deleteWorkoutTitle"),
+        message: t("confirm.deleteWorkoutMessage"),
       });
 
       if (!confirmed) {
@@ -3190,10 +3204,10 @@ function App() {
           },
           { history: "replace", scroll: "restore" },
         );
-        showNotice(result.status === "missing" ? "Запись уже удалена" : "Тренировка удалена");
+        showNotice(result.status === "missing" ? t("notice.logAlreadyDeleted") : t("notice.logDeleted"));
       } catch (error) {
         console.error(error);
-        showNotice("Не удалось удалить тренировку", "error");
+        showNotice(t("notice.logDeleteFailed"), "error");
       }
     },
     [navigate, refreshData, requestConfirmation, showNotice],
@@ -3222,9 +3236,9 @@ function App() {
     } else if (state.error) {
       screenKey = "error";
       screenContent = <ErrorScreen message={state.error} />;
-    } else if (!state.data) {
+    } else if (!localizedData) {
       screenKey = "missing-data";
-      screenContent = <ErrorScreen message="Данные не найдены" />;
+      screenContent = <ErrorScreen message={t("notice.dataMissing")} />;
     } else {
       screenKey = getViewScrollKey(state);
       const currentView =
@@ -3235,9 +3249,9 @@ function App() {
       if (currentView?.name === "exerciseHistory") {
         screenContent = (
           <ExerciseHistoryScreen
-            data={state.data}
+            data={localizedData}
             exerciseId={currentView.exerciseId}
-            exerciseName={currentView.exerciseName}
+            exerciseName={localizeExerciseName(currentView.exerciseId, currentView.exerciseName, language)}
             visibleCount={currentView.visibleCount}
             onBack={goBack}
             onShowMore={showMoreExerciseHistory}
@@ -3246,7 +3260,7 @@ function App() {
       } else if (state.activeTab === "home") {
         screenContent = (
           <HomeView
-            data={state.data}
+            data={localizedData}
             homeView={state.homeView}
             freeWorkoutDraft={state.freeWorkoutDraft}
             activeWorkoutSession={state.activeWorkoutSession}
@@ -3282,12 +3296,12 @@ function App() {
       } else if (state.activeTab === "plan") {
         screenContent = (
           <PlanView
-            data={state.data}
+            data={localizedData}
             planView={state.planView}
             templateDraft={state.templateDraft}
             exerciseDraft={state.exerciseDraft}
             trainingDayDraft={state.trainingDayDraft}
-            trainingDays={getSortedWorkoutGroups(state.data)}
+            trainingDays={getSortedWorkoutGroups(localizedData)}
             onBack={goBack}
             onDeleteTrainingDay={handleDeleteTrainingDay}
             onOpenTrainingDayCreate={openTrainingDayCreate}
@@ -3320,7 +3334,7 @@ function App() {
       } else if (state.journalView.name === "details") {
         screenContent = (
           <JournalWorkoutDetails
-            data={state.data}
+            data={localizedData}
             workoutLogId={state.journalView.workoutLogId}
             onBack={goBack}
             onDelete={handleDeleteWorkoutLog}
@@ -3330,7 +3344,7 @@ function App() {
       } else {
         screenContent = (
           <JournalView
-            data={state.data}
+            data={localizedData}
             journalFilter={state.journalFilter}
             journalView={state.journalView}
             visibleCount={state.journalVisibleCount}
@@ -3391,6 +3405,8 @@ function App() {
     handleTemplateNameChange,
     handleStartFreeWorkout,
     handleStartWorkout,
+    language,
+    localizedData,
     openExerciseCreate,
     openExerciseEdit,
     openExerciseGroup,
@@ -3417,7 +3433,6 @@ function App() {
     toggleFreeWorkoutMuscleGroup,
     state.activeTab,
     state.activeWorkoutSession,
-    state.data,
     state.error,
     state.exerciseDraft,
     state.freeWorkoutDraft,
@@ -3483,7 +3498,7 @@ function App() {
         {state.templateSelector ? (
           <TemplateSelector
             key="template-selector"
-            data={state.data}
+            data={localizedData}
             selector={state.templateSelector}
             onClose={closeTemplateSelector}
             onSelect={selectWorkoutTemplate}
@@ -3495,7 +3510,7 @@ function App() {
         {state.activeExerciseReplacement ? (
           <ActiveExerciseReplacementSheet
             key="exercise-replacement"
-            data={state.data}
+            data={localizedData}
             selector={state.activeExerciseReplacement}
             session={getActiveWorkoutSessionFromState(state)}
             onClose={closeExerciseReplacement}
@@ -3529,19 +3544,21 @@ function updateSelectedExerciseNumbers(list) {
 }
 
 function LoadingScreen() {
+  const { t } = useTranslation("screens");
   return (
     <section className="screen loading-screen">
       <div className="loader"></div>
-      <p>Загружаю данные</p>
+      <p>{t("common.loading")}</p>
     </section>
   );
 }
 
 function ErrorScreen({ message }) {
+  const { t } = useTranslation("screens");
   return (
     <section className="screen">
       <div className="empty-state error-state">
-        <h1>Не удалось загрузить приложение</h1>
+        <h1>{t("common.loadFailed")}</h1>
         <p>{message}</p>
       </div>
     </section>
@@ -3549,10 +3566,11 @@ function ErrorScreen({ message }) {
 }
 
 function ScreenTitle({ children, onBack }) {
+  const { t } = useTranslation("screens");
   return (
     <div className="screen-title-row">
       {onBack ? (
-        <button className="back-icon-button" type="button" aria-label="Назад" onClick={onBack}>
+        <button className="back-icon-button" type="button" aria-label={t("common.back")} onClick={onBack}>
           <SvgIcon name="arrowLeft" />
         </button>
       ) : null}
@@ -3562,6 +3580,7 @@ function ScreenTitle({ children, onBack }) {
 }
 
 function BottomNav({ activeTab, onTabChange }) {
+  const { t } = useTranslation("screens");
   const shouldReduceMotion = useReducedMotion();
   const indicatorTransition = shouldReduceMotion
     ? { duration: 0 }
@@ -3574,7 +3593,7 @@ function BottomNav({ activeTab, onTabChange }) {
 
   return (
     <LayoutGroup id="bottom-nav">
-      <nav id="bottomNav" className="bottom-nav" aria-label="Основная навигация">
+      <nav id="bottomNav" className="bottom-nav" aria-label={t("common.mainNav")}>
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
 
@@ -3583,7 +3602,7 @@ function BottomNav({ activeTab, onTabChange }) {
               key={tab.id}
               className={`nav-button${isActive ? " is-active" : ""}`}
               type="button"
-              aria-label={tab.label}
+              aria-label={t(tab.labelKey, { ns: "app" })}
               aria-current={isActive ? "page" : undefined}
               onClick={() => onTabChange(tab.id)}
             >
@@ -3669,6 +3688,7 @@ function HomeView({
   isStandalone,
   onInstall,
 }) {
+  const { t } = useTranslation("screens");
   if (homeView.name === "settings") {
     return (
       <SettingsScreen
@@ -3748,12 +3768,12 @@ function HomeView({
     <section className="screen home-screen">
       <header className="screen-header">
         <div className="home-overview-title-row">
-          <h1>Главная</h1>
+          <h1>{t("nav.home", { ns: "app" })}</h1>
           <button
             className="home-settings-button"
             type="button"
-            aria-label="Настройки"
-            title="Настройки"
+            aria-label={t("common.settings")}
+            title={t("common.settings")}
             onClick={onOpenSettings}
           >
             <SvgIcon name="settings" />
@@ -3804,7 +3824,6 @@ const THEME_TRANSITION_PROPERTIES = [
   "--shadow",
   "--shadow-soft",
 ];
-const themeTransition = { duration: 0.24, ease: [0.25, 0.1, 0.25, 1] };
 
 function readThemePalette(root) {
   const styles = getComputedStyle(root);
@@ -3812,7 +3831,7 @@ function readThemePalette(root) {
 }
 
 function ThemeSettings() {
-  const titleId = useId();
+  const { t } = useTranslation("screens");
   const shouldReduceMotion = useReducedMotion();
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme);
   const stopThemeTransitionRef = useRef(null);
@@ -3842,7 +3861,7 @@ function ThemeSettings() {
 
       applyPalette(0);
       const animation = animate(0, 1, {
-        ...themeTransition,
+        ...settingsToggleTransition,
         onUpdate: applyPalette,
         onComplete: clearPalette,
       });
@@ -3862,85 +3881,67 @@ function ThemeSettings() {
   }
 
   return (
-    <section className="panel plan-section">
-      <div className="section-title" id={titleId}>
-        <span>Тема приложения</span>
-      </div>
-      <div className="theme-options" role="group" aria-labelledby={titleId}>
-        {Object.entries({ light: "Светлая", dark: "Тёмная" }).map(([value, label], index) => (
-          <button
-            key={value}
-            className="action-button secondary-action theme-option"
-            style={{ gridColumn: index + 1 }}
-            type="button"
-            aria-pressed={theme === value}
-            onClick={() => selectTheme(value)}
-          >
-            <span>{label}</span>
-          </button>
-        ))}
-        <motion.span
-          className="theme-option-indicator"
-          style={{ gridColumn: theme === "light" ? 1 : 2 }}
-          layout={shouldReduceMotion ? false : "position"}
-          transition={themeTransition}
-          aria-hidden="true"
-        />
-      </div>
-    </section>
+    <SettingsToggle
+      title={t("settings.theme")}
+      options={[
+        { value: "light", label: t("settings.lightTheme") },
+        { value: "dark", label: t("settings.darkTheme") },
+      ]}
+      selectedValue={theme}
+      onSelect={selectTheme}
+    />
   );
 }
 
 function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall }) {
+  const { t } = useTranslation("screens");
   return (
     <section className="screen plan-screen settings-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>Настройки</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{t("common.settings")}</ScreenTitle>
       </header>
 
       <ThemeSettings />
+      <LanguageSettings />
+      <WeightUnitSettings />
 
       <section className="panel plan-section data-section">
         <div className="section-title section-title-with-info">
-          <span>Данные</span>
-          <InfoNotice label="Описание работы с данными">
+          <span>{t("settings.data")}</span>
+          <InfoNotice label={t("settings.dataHelp")}>
             <p>
-              <strong>Экспорт данных</strong> сохраняет ваши упражнения, шаблоны, тренировочные дни и
-              журнал в файл. Его можно использовать как резервную копию или перенести на другое
-              устройство. Незавершённая тренировка не сохраняется.
+              <strong>{t("settings.export")}</strong>{" "}{t("settings.exportDescription")}
             </p>
             <p>
-              <strong>Импорт данных</strong> заменяет выбранные разделы данными из файла.
-              Незавершённые тренировки будут удалены.
+              <strong>{t("settings.import")}</strong>{" "}{t("settings.importDescription")}
             </p>
             <p>
-              <strong>Очистить тренировки</strong> удаляет всю историю тренировок в журнале.
-              Упражнения, шаблоны, тренировочные дни и незавершённая тренировка останутся.
+              <strong>{t("settings.clearWorkouts")}</strong>{" "}{t("settings.clearDescription")}
             </p>
           </InfoNotice>
         </div>
         <div className="action-grid">
           <button className="action-button" type="button" onClick={onExportData}>
             <SvgIcon name="download" />
-            <span>Экспорт данных</span>
+            <span>{t("settings.export")}</span>
           </button>
           <button className="action-button" type="button" onClick={onImportData}>
             <SvgIcon name="upload" />
-            <span>Импорт данных</span>
+            <span>{t("settings.import")}</span>
           </button>
           <button className="action-button danger-action" type="button" onClick={onClearWorkouts}>
             <SvgIcon name="trash" />
-            <span>Очистить тренировки</span>
+            <span>{t("settings.clearWorkouts")}</span>
           </button>
         </div>
       </section>
 
       <section className="panel plan-section about-app-section">
         <div className="section-title">
-          <span>О приложении</span>
+          <span>{t("settings.about")}</span>
         </div>
         <div className="plan-row about-app-version-row">
-          <strong>Версия приложения</strong>
+          <strong>{t("settings.version")}</strong>
           <span>1.0</span>
         </div>
         <a
@@ -3949,16 +3950,16 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
           target="_blank"
           rel="noopener noreferrer"
         >
-          <span>Написать в Telegram</span>
+          <span>{t("settings.telegram")}</span>
         </a>
         <a className="action-button settings-contact-button" href="mailto:aidik1098@gmail.com">
-          <span>Написать на почту</span>
+          <span>{t("settings.email")}</span>
         </a>
       </section>
 
       {!isStandalone ? (
         <button className="action-button" type="button" onClick={onInstall}>
-          <span>Установить приложение</span>
+          <span>{t("settings.install")}</span>
         </button>
       ) : null}
     </section>
@@ -3966,17 +3967,17 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
 }
 
 function WorkoutCard({ card, illustrationKey, imageSrc, onOpen }) {
-  const nameParts =
-    card.workoutGroup.id === FREE_WORKOUT_GROUP_ID
-      ? ["Свой", "План"]
-      : card.workoutGroup.name.split("+").map((part) => part.trim()).filter(Boolean);
+  const { t } = useTranslation("screens");
+  const nameParts = card.workoutGroup.id === FREE_WORKOUT_GROUP_ID
+    ? t("domain:freeWorkout").split(" ")
+    : card.workoutGroup.name.split("+").map((part) => part.trim()).filter(Boolean);
   const lastDoneLabel = formatLastWorkoutLabel(card.lastWorkoutDate);
 
   return (
     <button className="workout-card workout-card-button" type="button" data-illustration={illustrationKey} onClick={onOpen}>
       <div className="workout-card-content">
         <div className="workout-card-copy">
-          <h2 className={`workout-name-stack${nameParts.length > 1 ? "" : " is-single-name"}`} aria-label={card.workoutGroup.name}>
+          <h2 className={`workout-name-stack${nameParts.length > 1 ? "" : " is-single-name"}`} aria-label={card.workoutGroup.id === FREE_WORKOUT_GROUP_ID ? t("domain:freeWorkout") : card.workoutGroup.name}>
             {nameParts.length > 1 ? (
               nameParts.map((part) => (
                 <span key={part} className="workout-name-line">
@@ -4018,6 +4019,7 @@ function WorkoutPreparationScreen({
   onContinueWorkout,
   onOpenFullWorkout,
 }) {
+  const { t } = useTranslation("screens");
   const details = buildWorkoutPreparationData(data, workoutGroupId);
   const unfinishedSession = getActiveWorkoutSessionForGroup(
     { data, activeWorkoutSession },
@@ -4028,8 +4030,8 @@ function WorkoutPreparationScreen({
     return (
       <section className="screen workout-prep-screen">
         <div className="empty-state error-state">
-          <ScreenTitle onBack={onBack}>Тренировка не найдена</ScreenTitle>
-          <p>Вернись на главную и выбери тренировку ещё раз.</p>
+          <ScreenTitle onBack={onBack}>{t("common.workoutNotFound")}</ScreenTitle>
+          <p>{t("prep.reselectWorkout")}</p>
         </div>
       </section>
     );
@@ -4039,12 +4041,12 @@ function WorkoutPreparationScreen({
     <section className="screen workout-prep-screen">
       <header className="screen-header">
         <ScreenTitle onBack={onBack}>{details.workoutGroup.name}</ScreenTitle>
-        <p className="screen-subtitle">Последний раз: {formatNumericDate(details.lastWorkoutDate)}</p>
+        <p className="screen-subtitle">{t("prep.lastTime", { date: formatNumericDate(details.lastWorkoutDate) })}</p>
       </header>
 
       <section className="panel plan-section">
         <div className="section-title">
-          <span>Шаблоны</span>
+          <span>{t("prep.templates")}</span>
         </div>
         <div className="plan-list">
           {details.templateRows.map((plan) => (
@@ -4056,7 +4058,7 @@ function WorkoutPreparationScreen({
             >
               <span className="prep-template-title">
                 <strong>{plan.muscleGroup.name}:</strong>
-                <span className={plan.template?.isMissing ? "is-missing" : ""}>{plan.template?.name || "Не выбран"}</span>
+                <span className={plan.template?.isMissing ? "is-missing" : ""}>{plan.template?.name || t("prep.noSelection")}</span>
               </span>
               <span className="select-chevron" aria-hidden="true" />
             </button>
@@ -4070,18 +4072,18 @@ function WorkoutPreparationScreen({
           type="button"
           onClick={() => onStartWorkout(details.workoutGroup.id)}
         >
-          <span>{unfinishedSession ? "Новая тренировка" : "Начать тренировку"}</span>
+          <span>{unfinishedSession ? t("prep.newWorkout") : t("prep.startWorkout")}</span>
         </button>
         {unfinishedSession ? (
           <button className="action-button" type="button" onClick={() => onContinueWorkout(unfinishedSession.id)}>
-            <span>Продолжить тренировку</span>
+            <span>{t("prep.resumeWorkout")}</span>
           </button>
         ) : null}
       </div>
 
       <section className="panel plan-section">
         <div className="section-title">
-          <span>План тренировки</span>
+          <span>{t("prep.workoutPlan")}</span>
         </div>
         <div className="prep-plan-list">
           {details.planSections.map((plan) => (
@@ -4096,7 +4098,7 @@ function WorkoutPreparationScreen({
                       <button
                         className={`prep-exercise-row${exercise.isMissing ? " is-missing" : ""}`}
                         type="button"
-                        aria-label={`Открыть технику ${exercise.name}`}
+                        aria-label={t("common.openTechnique", { name: exercise.name })}
                         onClick={() => onOpenTechnique(exercise)}
                       >
                         <strong>{exercise.name}</strong>
@@ -4107,7 +4109,7 @@ function WorkoutPreparationScreen({
                 </ol>
               ) : (
                 <div className="empty-state compact-empty-state">
-                  <h2>В шаблоне нет упражнений</h2>
+                  <h2>{t("prep.emptyTemplate")}</h2>
                 </div>
               )}
             </div>
@@ -4133,6 +4135,7 @@ function FreeWorkoutPreparationScreen({
   onStartWorkout,
   onContinueWorkout,
 }) {
+  const { t } = useTranslation("screens");
   const muscleGroups = [...(data.muscleGroups ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
   const selectedMuscleGroupIds = draft.selectedMuscleGroupIds ?? [];
   const selectedExerciseIds = draft.selectedExerciseIds ?? [];
@@ -4151,9 +4154,9 @@ function FreeWorkoutPreparationScreen({
 
     return {
       id: exerciseId,
-      name: exercise && !exercise.isArchived ? exercise.name : "Упражнение не найдено",
+      name: exercise && !exercise.isArchived ? exercise.name : t("common.exerciseNotFound"),
       mediaUrl: exercise && !exercise.isArchived ? exercise.mediaUrl ?? "" : "",
-      muscleGroupName: muscleGroup?.name ?? "Мышца",
+      muscleGroupName: muscleGroup?.name ?? t("common.muscleGroup"),
       isMissing: !exercise || Boolean(exercise.isArchived),
     };
   });
@@ -4170,13 +4173,13 @@ function FreeWorkoutPreparationScreen({
   return (
     <section className="screen workout-prep-screen free-workout-prep-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>{FREE_WORKOUT_NAME}</ScreenTitle>
-        <p className="screen-subtitle">Последний раз: {formatNumericDate(freeWorkoutCard.lastWorkoutDate)}</p>
+        <ScreenTitle onBack={onBack}>{freeWorkoutCard.workoutGroup.name}</ScreenTitle>
+        <p className="screen-subtitle">{t("prep.lastTime", { date: formatNumericDate(freeWorkoutCard.lastWorkoutDate) })}</p>
       </header>
 
       <section className="panel plan-section">
         <div className="section-title">
-          <span>Группы мышц</span>
+          <span>{t("prep.muscleGroups")}</span>
         </div>
         <div className="muscle-chip-list">
           {muscleGroups.map((muscleGroup) => {
@@ -4216,11 +4219,11 @@ function FreeWorkoutPreparationScreen({
           disabled={!selectedExerciseIds.length}
           onClick={onStartWorkout}
         >
-          <span>{unfinishedSession ? "Новая тренировка" : "Начать тренировку"}</span>
+          <span>{unfinishedSession ? t("prep.newWorkout") : t("prep.startWorkout")}</span>
         </button>
         {unfinishedSession ? (
           <button className="action-button" type="button" onClick={() => onContinueWorkout(unfinishedSession.id)}>
-            <span>Продолжить тренировку</span>
+            <span>{t("prep.resumeWorkout")}</span>
           </button>
         ) : null}
       </div>
@@ -4239,6 +4242,7 @@ function FreeWorkoutExerciseBuilder({
   onDragStart,
   onOpenTechnique,
 }) {
+  const { t } = useTranslation("screens");
   const shouldReduceMotion = useReducedMotion();
   const [baseSearchQueries, setBaseSearchQueries] = useState({});
   const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState(null);
@@ -4248,7 +4252,7 @@ function FreeWorkoutExerciseBuilder({
   const baseSectionTransition = shouldReduceMotion
     ? { duration: 0 }
     : { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
-  const selectedEmptyText = hasSelectedMuscleGroups ? "Выбери упражнения ниже" : "Выбери группы мышц выше";
+  const selectedEmptyText = hasSelectedMuscleGroups ? t("builder.pickExercises") : t("builder.pickMuscles");
   const techniqueLongPress = useExerciseTechniqueLongPress(onOpenTechnique);
   const filteredBaseSections = useMemo(
     () =>
@@ -4262,10 +4266,10 @@ function FreeWorkoutExerciseBuilder({
           filteredExercises: normalizedQuery
             ? section.exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedQuery))
             : section.exercises,
-          emptyText: section.exercises.length ? "Ничего не найдено" : "В базе пока нет упражнений",
+          emptyText: section.exercises.length ? t("common.noSearchResults") : t("builder.emptyLibrary"),
         };
       }),
-    [baseSections, baseSearchQueries],
+    [baseSections, baseSearchQueries, t],
   );
 
   const handleBaseSearchChange = useCallback((muscleGroupId, value) => {
@@ -4336,7 +4340,7 @@ function FreeWorkoutExerciseBuilder({
         transition={baseSectionTransition}
       >
         <div className="section-title">
-          <span>Выбранные упражнения</span>
+          <span>{t("builder.selectedExercises")}</span>
         </div>
         <div className="template-builder-scroll" data-selected-exercise-list data-draft-kind="free">
           {selectedExercises.length ? (
@@ -4357,7 +4361,7 @@ function FreeWorkoutExerciseBuilder({
                     className="template-drag-handle"
                     type="button"
                     data-template-drag-handle
-                    aria-label={`Перетащить упражнение ${exercise.name}`}
+                    aria-label={t("builder.dragExercise", { name: exercise.name })}
                     onPointerDown={onDragStart}
                   >
                     <span className="template-drag-grip" aria-hidden="true">
@@ -4375,7 +4379,7 @@ function FreeWorkoutExerciseBuilder({
                   <button
                     className="template-selected-name template-technique-trigger"
                     type="button"
-                    aria-label={`Открыть технику ${exercise.name}`}
+                    aria-label={t("common.openTechnique", { name: exercise.name })}
                     onClick={() => onOpenTechnique(exercise)}
                   >
                     {exercise.name}
@@ -4386,7 +4390,7 @@ function FreeWorkoutExerciseBuilder({
                     type="button"
                     data-action="remove-template-exercise"
                     data-exercise-id={exercise.id}
-                    aria-label={`Убрать ${exercise.name}`}
+                    aria-label={t("builder.removeExercise", { name: exercise.name })}
                     onClick={() => runRemoveExercise(exercise.id)}
                   />
                 </div>
@@ -4412,12 +4416,12 @@ function FreeWorkoutExerciseBuilder({
             >
               <div className="section-title">
                 <span>{section.muscleGroup.name}</span>
-                <span>База упражнений</span>
+                <span>{t("builder.exerciseLibrary")}</span>
               </div>
               <SearchField
                 value={section.searchQuery}
                 onChange={(value) => handleBaseSearchChange(section.muscleGroup.id, value)}
-                placeholder="Поиск упражнения"
+                placeholder={t("builder.searchExercises")}
               />
               <div className="template-builder-scroll free-workout-base-scroll">
                 {section.filteredExercises.length ? (
@@ -4473,6 +4477,8 @@ function ActiveWorkoutScreen({
   onNextExercise,
   onFinish,
 }) {
+  const { t, i18n } = useTranslation("screens");
+  const weightUnit = useWeightUnit();
   const shouldReduceMotion = useReducedMotion();
   const exerciseLogsLength = session?.exerciseLogs?.length ?? 0;
   const currentIndex = exerciseLogsLength
@@ -4539,8 +4545,8 @@ function ActiveWorkoutScreen({
     return (
       <section className="screen active-workout-screen">
         <div className="empty-state error-state">
-          <ScreenTitle onBack={onBack}>Активная тренировка не найдена</ScreenTitle>
-          <p>Вернись на главную и начни тренировку ещё раз.</p>
+          <ScreenTitle onBack={onBack}>{t("active.missing")}</ScreenTitle>
+          <p>{t("active.restart")}</p>
         </div>
       </section>
     );
@@ -4551,7 +4557,10 @@ function ActiveWorkoutScreen({
     (item) => item.muscleGroupId === exerciseLog.muscleGroupId,
   );
   const groupExerciseIndex = groupExercises.findIndex((item) => item === exerciseLog);
-  const exerciseProgressLabel = `${exerciseLog.muscleGroupNameSnapshot} упражнение ${groupExerciseIndex + 1} из ${groupExercises.length}`;
+  const language = i18n.resolvedLanguage;
+  const exerciseName = localizeExerciseName(exerciseLog.exerciseId, exerciseLog.exerciseNameSnapshot, language);
+  const muscleGroupName = localizeMuscleGroupName(exerciseLog.muscleGroupId, exerciseLog.muscleGroupNameSnapshot, language);
+  const exerciseProgressLabel = t("active.exerciseProgress", { group: muscleGroupName, index: groupExerciseIndex + 1, total: groupExercises.length });
   const isFirstExercise = currentIndex <= 0;
   const isLastExercise = currentIndex >= session.exerciseLogs.length - 1;
   const sets = exerciseLog.sets?.length ? exerciseLog.sets : [{ setNumber: 1, weightKg: "", reps: "" }];
@@ -4560,7 +4569,7 @@ function ActiveWorkoutScreen({
   const exerciseMediaUrl = (exerciseLog.mediaUrl || exerciseFromBase?.mediaUrl || "").trim();
   const techniqueExercise = {
     id: exerciseLog.exerciseId,
-    name: exerciseLog.exerciseNameSnapshot,
+    name: exerciseName,
     mediaUrl: exerciseMediaUrl,
     techniqueDescription: exerciseFromBase?.techniqueDescription ?? "",
   };
@@ -4585,7 +4594,7 @@ function ActiveWorkoutScreen({
         <header className="screen-header active-workout-header">
           <ScreenTitle onBack={onBack}>{exerciseProgressLabel}</ScreenTitle>
           <p className="active-exercise-title">
-            {exerciseLog.exerciseNameSnapshot}
+            {exerciseName}
           </p>
           <div className="active-exercise-actions">
             <button
@@ -4593,7 +4602,7 @@ function ActiveWorkoutScreen({
               type="button"
               onClick={() => onOpenReplacement(currentIndex)}
             >
-              <span>Заменить упражнение</span>
+              <span>{t("active.replaceExercise")}</span>
             </button>
             {exerciseMediaUrl || techniqueExercise.techniqueDescription ? (
               <button
@@ -4601,7 +4610,7 @@ function ActiveWorkoutScreen({
                 type="button"
                 onClick={() => onOpenTechnique(techniqueExercise)}
               >
-                <span>Показать технику</span>
+                <span>{t("active.viewTechnique")}</span>
               </button>
             ) : null}
           </div>
@@ -4610,18 +4619,18 @@ function ActiveWorkoutScreen({
         <button
           className="action-button secondary-action active-exercise-history-button"
           type="button"
-          aria-label={`История упражнения. Прошлый раз: ${previousSetsLabel}`}
+          aria-label={t("active.historyPreviousSets", { sets: previousSetsLabel })}
           disabled={!exerciseLog.exerciseId}
           onClick={() => onOpenHistory(exerciseLog.exerciseId, exerciseLog.exerciseNameSnapshot)}
         >
           <span className="active-previous-sets">
-            <span>Прошлый раз:</span> <strong>{previousSetsLabel}</strong>
+            <span>{t("active.previousSets")}</span> <strong>{previousSetsLabel}</strong>
           </span>
         </button>
 
         <section className="panel active-exercise-panel">
           <p className="active-previous-sets">
-            <span>Совет:</span> <strong>{progressionAdvice.text}</strong>
+            <span>{t("active.advice")}</span> <strong>{progressionAdvice.text}</strong>
           </p>
         </section>
 
@@ -4642,8 +4651,8 @@ function ActiveWorkoutScreen({
                     disabled={!set.addedAt}
                     aria-label={
                       set.addedAt
-                        ? `Показать время добавления подхода ${index + 1}`
-                        : `Время подхода ${index + 1} ещё не записано`
+                        ? t("active.showSetTime", { index: index + 1 })
+                        : t("active.setTimeMissing", { index: index + 1 })
                     }
                     aria-expanded={visibleSetTimeIndex === index}
                     onClick={() =>
@@ -4662,13 +4671,15 @@ function ActiveWorkoutScreen({
                   {visibleSetTimeIndex === index && set.addedAt ? (
                     <div className="active-set-time-popover">
                       <span className="active-set-time-text">
-                        Подход добавлен {formatActiveSetMinutesAgo(set.addedAt, setTimeNow)} (
-                        {formatActiveSetAddedTime(set.addedAt, setTimeNow)})
+                        {t("active.setAdded", {
+                          relativeTime: formatActiveSetMinutesAgo(set.addedAt, setTimeNow),
+                          time: formatActiveSetAddedTime(set.addedAt, setTimeNow),
+                        })}
                       </span>
                       <button
                         className="active-set-time-close"
                         type="button"
-                        aria-label="Закрыть время подхода"
+                        aria-label={t("active.closeSetTime")}
                         onClick={() => setVisibleSetTimeIndex(null)}
                       />
                     </div>
@@ -4678,7 +4689,7 @@ function ActiveWorkoutScreen({
                   <button
                     className="active-set-step-button plus-kg"
                     type="button"
-                    aria-label={`Уменьшить вес в подходе ${index + 1}`}
+                    aria-label={t("active.decreaseWeight", { index: index + 1 })}
                     onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, -1))}
                   >
                     -
@@ -4688,24 +4699,24 @@ function ActiveWorkoutScreen({
                     inputMode="decimal"
                     value={formatWeightInput(set.weightKg)}
                     placeholder="0"
-                    aria-label={`Вес в подходе ${index + 1}`}
+                    aria-label={t("active.weight", { index: index + 1 })}
                     onChange={(event) => onSetChange(currentIndex, index, "weightKg", event.target.value)}
                   />
                   <button
                     className="active-set-step-button minus-kg"
                     type="button"
-                    aria-label={`Увеличить вес в подходе ${index + 1}`}
+                    aria-label={t("active.increaseWeight", { index: index + 1 })}
                     onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, 1))}
                   >
                     +
                   </button>
-                  <span>кг</span>
+                  <span>{weightUnit}</span>
                 </div>
                 <div className="active-set-input input-pw">
                   <button
                     className="active-set-step-button plus-pw"
                     type="button"
-                    aria-label={`Уменьшить повторы в подходе ${index + 1}`}
+                    aria-label={t("active.decreaseReps", { index: index + 1 })}
                     onClick={() => onSetChange(currentIndex, index, "reps", adjustActiveRepsValue(set.reps, -1))}
                   >
                     -
@@ -4715,24 +4726,24 @@ function ActiveWorkoutScreen({
                     inputMode="numeric"
                     value={set.reps ?? ""}
                     placeholder="0"
-                    aria-label={`Повторы в подходе ${index + 1}`}
+                    aria-label={t("active.reps", { index: index + 1 })}
                     onChange={(event) => onSetChange(currentIndex, index, "reps", event.target.value)}
                   />
                   <button
                     className="active-set-step-button minus-pw"
                     type="button"
-                    aria-label={`Увеличить повторы в подходе ${index + 1}`}
+                    aria-label={t("active.increaseReps", { index: index + 1 })}
                     onClick={() => onSetChange(currentIndex, index, "reps", adjustActiveRepsValue(set.reps, 1))}
                   >
                     +
                   </button>
-                  <span>повт.</span>
+                  <span>{t("units.reps")}</span>
                 </div>
                 <button
                   className="active-set-remove-button"
                   type="button"
                   disabled={!canRemoveSet}
-                  aria-label={`Удалить подход ${index + 1}`}
+                  aria-label={t("active.removeSet", { index: index + 1 })}
                   onClick={() => {
                     setVisibleSetTimeIndex(null);
                     onRemoveSet(currentIndex, index);
@@ -4750,7 +4761,7 @@ function ActiveWorkoutScreen({
               onAddSet(currentIndex, sets[sets.length - 1] ?? null);
             }}
           >
-            <span>Добавить подход</span>
+            <span>{t("active.addSet")}</span>
           </button>
         </section>
       </motion.div>
@@ -4762,10 +4773,10 @@ function ActiveWorkoutScreen({
           disabled={isFirstExercise}
           onClick={onPreviousExercise}
         >
-          <span>Предыдущее упр</span>
+          <span>{t("active.previousExercise")}</span>
         </button>
         <button className="action-button active-next-button" type="button" onClick={isLastExercise ? onFinish : onNextExercise}>
-          <span>{isLastExercise ? "Завершить трен" : "Следующее упр"}</span>
+          <span>{isLastExercise ? t("active.finishWorkout") : t("active.nextExercise")}</span>
         </button>
       </div>
     </section>
@@ -4773,14 +4784,15 @@ function ActiveWorkoutScreen({
 }
 
 function PreviousWorkoutBlock({ workout, onOpenFullWorkout }) {
+  const { t } = useTranslation("screens");
   if (!workout) {
     return (
       <section className="panel plan-section">
         <div className="section-title">
-          <span>Прошлая тренировка</span>
+          <span>{t("previous.title")}</span>
         </div>
         <div className="empty-state compact-empty-state">
-          <h2>Прошлых тренировок нет</h2>
+          <h2>{t("previous.none")}</h2>
         </div>
       </section>
     );
@@ -4789,7 +4801,7 @@ function PreviousWorkoutBlock({ workout, onOpenFullWorkout }) {
   return (
     <section className="panel plan-section">
       <div className="section-title">
-        <span>Прошлая тренировка</span>
+        <span>{t("previous.title")}</span>
       </div>
       <div className="previous-workout-card">
         <strong className="previous-workout-date">{formatDate(workout.date)}</strong>
@@ -4797,15 +4809,15 @@ function PreviousWorkoutBlock({ workout, onOpenFullWorkout }) {
           {workout.sections.map((muscleLog) => (
             <div key={muscleLog.muscleGroup.id} className="previous-workout-group">
               <strong>
-                {muscleLog.muscleGroup.name} {muscleLog.templateName || "Шаблон не указан"}
+                {muscleLog.muscleGroup.name} {muscleLog.templateName || t("domain:templateNotSpecified")}
               </strong>
-              <p>{muscleLog.exerciseNames?.join(", ") || "Нет списка упражнений"}</p>
+              <p>{muscleLog.exerciseNames?.join(", ") || t("previous.noExercises")}</p>
             </div>
           ))}
         </div>
       </div>
       <button className="action-button" type="button" onClick={() => onOpenFullWorkout(workout.id)}>
-        <span>Открыть полностью</span>
+        <span>{t("previous.open")}</span>
       </button>
     </section>
   );
@@ -4904,8 +4916,10 @@ function PlanView({
   }
 
   if (planView.name === "createExercise" || planView.name === "editExercise") {
+    const { exercise } = buildExerciseEditingData(data, planView.exerciseId);
     return (
       <ExerciseFormScreen
+        exercise={exercise}
         planView={planView}
         draft={exerciseDraft}
         onBack={onBack}
@@ -4945,23 +4959,24 @@ function PlanOverview({
   onOpenTemplateGroup,
   onOpenExerciseGroup,
 }) {
+  const { t } = useTranslation("screens");
   const templateSummaries = buildTemplateSummariesByMuscleGroup(data);
   const exerciseSummaries = buildExerciseSummariesByMuscleGroup(data);
 
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <h1>План</h1>
+        <h1>{t("nav.plan", { ns: "app" })}</h1>
       </header>
 
       <section className="panel plan-section">
         <div className="section-title section-title-with-info">
-          <span>Тренировочные дни</span>
-          <InfoNotice label="Описание тренировочных дней">
+          <span>{t("plan.trainingDays")}</span>
+          <InfoNotice label={t("plan.trainingDaysHelp")}>
             <p>
-              Здесь настраиваются тренировки, которые отображаются на главной.
+              {t("plan.trainingDaysIntro")}
             </p>
-            <p>Для каждой тренировки можно выбрать до двух групп мышц.</p>
+            <p>{t("plan.trainingDaysLimit")}</p>
           </InfoNotice>
         </div>
         <div className="plan-list">
@@ -4978,21 +4993,20 @@ function PlanOverview({
               </button>
             ))
           ) : (
-            <p className="training-day-empty">Тренировочных дней пока нет</p>
+            <p className="training-day-empty">{t("plan.noTrainingDays")}</p>
           )}
         </div>
-        <button className="action-button training-day-add-button" type="button" onClick={onOpenTrainingDayCreate}>
-          <span>Добавить тренировку</span>
+        <button className="action-button training-day-add-button secondary-action" type="button" onClick={onOpenTrainingDayCreate}>
+          <span>{t("plan.addWorkout")}</span>
         </button>
       </section>
 
       <section className="panel plan-section">
         <div className="section-title section-title-with-info">
-          <span>Шаблоны упражнений</span>
-          <InfoNotice label="Описание шаблонов упражнений">
+          <span>{t("plan.exerciseTemplates")}</span>
+          <InfoNotice label={t("plan.exerciseTemplatesHelp")}>
             <p>
-              Шаблон — это готовый набор упражнений для определённой группы мышц. Можно создать несколько
-              шаблонов и выбирать подходящий перед началом тренировки.
+              {t("plan.exerciseTemplatesIntro")}
             </p>
           </InfoNotice>
         </div>
@@ -5007,7 +5021,7 @@ function PlanOverview({
               <div className="plan-summary-card-copy">
                 <strong>{summary.muscleGroup.name}</strong>
                 <span>
-                  {summary.templateCount} {pluralRu(summary.templateCount, "шаблон", "шаблона", "шаблонов")}
+                  {t("plan.templateCount", { count: summary.templateCount })}
                 </span>
               </div>
               <ClickIndicator />
@@ -5018,13 +5032,12 @@ function PlanOverview({
 
       <section className="panel plan-section">
         <div className="section-title section-title-with-info">
-          <span>База упражнений</span>
-          <InfoNotice label="Описание базы упражнений">
+          <span>{t("builder.exerciseLibrary")}</span>
+          <InfoNotice label={t("plan.exerciseLibraryHelp")}>
             <p>
-              Здесь хранится список доступных упражнений для каждой группы мышц. Упражнения можно
-              добавлять, изменять и удалять. Для каждого упражнения можно сохранить шаги техники и ссылку на видео или GIF.
+              {t("plan.exerciseLibraryIntro")}
             </p>
-            <p>Упражнения из базы используются в шаблонах, «Своём плане» и при замене упражнения.</p>
+            <p>{t("plan.exerciseLibraryUse")}</p>
           </InfoNotice>
         </div>
         <div className="plan-summary-grid">
@@ -5037,7 +5050,7 @@ function PlanOverview({
             >
               <div className="plan-summary-card-copy">
                 <strong>{summary.muscleGroup.name}</strong>
-                <span>{summary.exerciseCount} упр.</span>
+                <span>{t("plan.exerciseCount", { count: summary.exerciseCount })}</span>
               </div>
               <ClickIndicator />
             </button>
@@ -5050,6 +5063,7 @@ function PlanOverview({
 }
 
 function TrainingDayFormScreen({ data, draft, isEdit, onBack, onDelete, onSave, onToggleMuscleGroup }) {
+  const { t } = useTranslation("screens");
   const selectedMuscleGroupIds = draft.selectedMuscleGroupIds ?? [];
   const muscleGroups = [...data.muscleGroups].sort(
     (first, second) => Number(first.sortOrder ?? 0) - Number(second.sortOrder ?? 0),
@@ -5059,14 +5073,14 @@ function TrainingDayFormScreen({ data, draft, isEdit, onBack, onDelete, onSave, 
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>{isEdit ? "Тренировка" : "Новая тренировка"}</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{isEdit ? t("plan.workout") : t("prep.newWorkout")}</ScreenTitle>
       </header>
 
       <form className="training-day-form" onSubmit={onSave}>
         <section className="panel plan-section">
           <div className="section-title">
-            <span>Группы мышц</span>
-            <small>до 2 групп</small>
+            <span>{t("prep.muscleGroups")}</span>
+            <small>{t("plan.muscleLimit")}</small>
           </div>
 
           <div className="muscle-chip-list">
@@ -5089,17 +5103,17 @@ function TrainingDayFormScreen({ data, draft, isEdit, onBack, onDelete, onSave, 
           </div>
 
           <div className="training-day-name-preview">
-            <strong>{trainingDayName || "Выбери группы мышц"}</strong>
+            <strong>{trainingDayName || t("plan.pickMuscles")}</strong>
           </div>
         </section>
 
         <button className="action-button" type="submit" disabled={!selectedMuscleGroupIds.length}>
-          <span>Сохранить тренировку</span>
+          <span>{t("plan.saveWorkout")}</span>
         </button>
 
         {isEdit ? (
           <button className="action-button danger-action" type="button" onClick={onDelete}>
-            <span>Удалить тренировку</span>
+            <span>{t("plan.deleteWorkout")}</span>
           </button>
         ) : null}
       </form>
@@ -5108,6 +5122,7 @@ function TrainingDayFormScreen({ data, draft, isEdit, onBack, onDelete, onSave, 
 }
 
 function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
+  const { t } = useTranslation("screens");
   const details = buildTemplatesForMuscleGroup(data, muscleGroupId);
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
@@ -5118,18 +5133,18 @@ function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
 
     return details.templates.filter((template) => matchesSearchValue(template.name, normalizedSearchQuery));
   }, [details.templates, normalizedSearchQuery]);
-  const emptyText = details.templates.length ? "Ничего не найдено" : "Пока нет шаблонов";
+  const emptyText = details.templates.length ? t("common.noSearchResults") : t("templates.empty");
 
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>Шаблоны: {details.muscleGroup?.name || "Мышца"}</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{t("templates.groupTitle", { group: details.muscleGroup?.name || t("common.muscleGroup") })}</ScreenTitle>
       </header>
 
-      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск шаблона" />
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder={t("templates.search")} />
 
       <button className="action-button create-template-button" type="button" onClick={() => onCreate(muscleGroupId)}>
-        <span>Создать шаблон</span>
+        <span>{t("templates.create")}</span>
       </button>
 
       <div className="template-list">
@@ -5154,11 +5169,12 @@ function TemplatesScreen({ data, muscleGroupId, onBack, onCreate, onEdit }) {
 }
 
 function TemplateCard({ template, exercises, onEdit }) {
+  const { t } = useTranslation("screens");
   return (
     <article className="template-card">
       <div className="template-card-topline">
         <h2>{template.name}</h2>
-        <EditIconButton label={`Редактировать шаблон ${template.name}`} onClick={onEdit} />
+        <EditIconButton label={t("templates.edit", { name: template.name })} onClick={onEdit} />
       </div>
 
       <div className="template-exercise-block">
@@ -5190,6 +5206,7 @@ function TemplateFormScreen({
   onDelete,
   onOpenTechnique,
 }) {
+  const { t } = useTranslation("screens");
   const details =
     planView.name === "editTemplate"
       ? buildTemplateEditingData(data, planView.templateId)
@@ -5200,7 +5217,7 @@ function TemplateFormScreen({
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>{isEdit ? `Шаблон: ${details.muscleGroup?.name || "Мышца"}` : `Шаблон: ${details.muscleGroup?.name || "Мышца"}`}</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{t("templates.formTitle", { group: details.muscleGroup?.name || t("common.muscleGroup") })}</ScreenTitle>
       </header>
 
       <form className="template-form" onSubmit={onSave}>
@@ -5209,12 +5226,11 @@ function TemplateFormScreen({
             className="form-input"
             type="text"
             name="templateName"
-            value={protectedTemplate ? details.template.name : draft.name}
-            placeholder="Название шаблона"
+            value={protectedTemplate ? details.template.name : (draft.name ?? details.template?.name ?? "")}
+            placeholder={t("templates.name")}
             autoComplete="off"
             onChange={onNameChange}
-            readOnly={protectedTemplate}
-            aria-readonly={protectedTemplate}
+            disabled={protectedTemplate}
           />
         </label>
 
@@ -5228,12 +5244,12 @@ function TemplateFormScreen({
         />
 
         <button className="action-button" type="submit">
-          <span>Сохранить шаблон</span>
+          <span>{t("templates.save")}</span>
         </button>
 
         {isEdit && !protectedTemplate ? (
           <button className="action-button danger-action" type="button" onClick={onDelete}>
-            <span>Удалить шаблон</span>
+            <span>{t("templates.delete")}</span>
           </button>
         ) : null}
       </form>
@@ -5266,6 +5282,7 @@ function SearchField({ value, onChange, placeholder }) {
 }
 
 function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, onRemoveExercise, onDragStart, onOpenTechnique }) {
+  const { t } = useTranslation("screens");
   const [baseSearchQuery, setBaseSearchQuery] = useState("");
   const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState(null);
   const [removingExerciseIds, setRemovingExerciseIds] = useState(() => new Set());
@@ -5281,10 +5298,10 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
 
     return details.exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedBaseSearchQuery));
   }, [details.exercises, normalizedBaseSearchQuery]);
-  const baseEmptyText = details.exercises.length ? "Ничего не найдено" : "В базе пока нет упражнений";
+  const baseEmptyText = details.exercises.length ? t("common.noSearchResults") : t("builder.emptyLibrary");
   const selectedExercises = selectedExerciseIds.map((exerciseId) => {
     const exercise = details.exercises.find((item) => item.id === exerciseId);
-    return exercise || { id: exerciseId, name: "Упражнение не найдено", isMissing: true };
+    return exercise || { id: exerciseId, name: t("common.exerciseNotFound"), isMissing: true };
   });
 
   useEffect(() => {
@@ -5338,7 +5355,7 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
     <>
       <section className="panel plan-section template-builder-section">
         <div className="section-title">
-          <span>Выбранные упражнения</span>
+          <span>{t("builder.selectedExercises")}</span>
         </div>
         <div className="template-builder-scroll" data-selected-exercise-list>
           {selectedExercises.length ? (
@@ -5359,7 +5376,7 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                     className="template-drag-handle"
                     type="button"
                     data-template-drag-handle
-                    aria-label={`Перетащить упражнение ${exercise.name}`}
+                    aria-label={t("builder.dragExercise", { name: exercise.name })}
                     onPointerDown={onDragStart}
                   >
                     <span className="template-drag-grip" aria-hidden="true">
@@ -5377,7 +5394,7 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                   <button
                     className="template-selected-name template-technique-trigger"
                     type="button"
-                    aria-label={`Открыть технику ${exercise.name}`}
+                    aria-label={t("common.openTechnique", { name: exercise.name })}
                     onClick={() => onOpenTechnique(exercise)}
                   >
                     {exercise.name}
@@ -5387,23 +5404,23 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                     type="button"
                     data-action="remove-template-exercise"
                     data-exercise-id={exercise.id}
-                    aria-label={`Убрать ${exercise.name}`}
+                    aria-label={t("builder.removeExercise", { name: exercise.name })}
                     onClick={() => runRemoveExercise(exercise.id)}
                   />
                 </div>
               );
             })
           ) : (
-            <div className="template-builder-empty">Выбери упражнения ниже</div>
+            <div className="template-builder-empty">{t("builder.pickExercises")}</div>
           )}
         </div>
       </section>
 
       <section className="panel plan-section template-builder-section">
         <div className="section-title">
-          <span>База упражнений</span>
+          <span>{t("builder.exerciseLibrary")}</span>
         </div>
-        <SearchField value={baseSearchQuery} onChange={setBaseSearchQuery} placeholder="Поиск упражнения" />
+        <SearchField value={baseSearchQuery} onChange={setBaseSearchQuery} placeholder={t("builder.searchExercises")} />
         <div className="template-builder-scroll">
           <div className="template-base-list">
             {filteredBaseExercises.length ? (
@@ -5442,6 +5459,7 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
 }
 
 function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpenTechnique }) {
+  const { t } = useTranslation("screens");
   const details = buildExercisesForMuscleGroup(data, muscleGroupId);
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
@@ -5452,18 +5470,18 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
 
     return details.exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedSearchQuery));
   }, [details.exercises, normalizedSearchQuery]);
-  const emptyText = details.exercises.length ? "Ничего не найдено" : "Пока нет упражнений";
+  const emptyText = details.exercises.length ? t("common.noSearchResults") : t("exercises.empty");
 
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>База: {details.muscleGroup?.name || "Мышца"}</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{t("exercises.libraryTitle", { group: details.muscleGroup?.name || t("common.muscleGroup") })}</ScreenTitle>
       </header>
 
-      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск упражнения" />
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder={t("builder.searchExercises")} />
 
       <button className="action-button create-template-button" type="button" onClick={() => onCreate(muscleGroupId)}>
-        <span>Добавить упражнение</span>
+        <span>{t("exercises.add")}</span>
       </button>
 
       <div className="template-list">
@@ -5474,14 +5492,14 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
                 <button
                   className="exercise-card-title exercise-card-technique"
                   type="button"
-                  aria-label={`Открыть технику ${exercise.name}`}
+                  aria-label={t("common.openTechnique", { name: exercise.name })}
                   onClick={() => onOpenTechnique(exercise)}
                 >
                   <h2>{exercise.name}</h2>
-                  {exercise.techniqueDescription || exercise.mediaUrl ? <span>Техника добавлена</span> : null}
+                  {exercise.techniqueDescription || exercise.mediaUrl ? <span>{t("exercises.hasTechnique")}</span> : null}
                 </button>
                 <EditIconButton
-                  label={`Редактировать упражнение ${exercise.name}`}
+                  label={t("exercises.edit", { name: exercise.name })}
                   onClick={() => onEdit(muscleGroupId, exercise.id)}
                 />
               </div>
@@ -5499,6 +5517,7 @@ function ExercisesScreen({ data, muscleGroupId, onBack, onCreate, onEdit, onOpen
 }
 
 function ExerciseGifPreview({ src }) {
+  const { t } = useTranslation("screens");
   const [status, setStatus] = useState("loading");
 
   return (
@@ -5506,15 +5525,15 @@ function ExerciseGifPreview({ src }) {
       {status !== "error" ? (
         <img
           src={src}
-          alt="Предпросмотр GIF упражнения"
+          alt={t("technique.gifAlt")}
           loading="lazy"
           decoding="async"
           onLoad={() => setStatus("loaded")}
           onError={() => setStatus("error")}
         />
       ) : null}
-      {status === "loading" ? <span className="gif-loading">Загрузка GIF</span> : null}
-      {status === "error" ? <span>Не удалось загрузить GIF. Проверьте ссылку.</span> : null}
+      {status === "loading" ? <span className="gif-loading">{t("technique.loadingGif")}</span> : null}
+      {status === "error" ? <span>{t("technique.gifError")}</span> : null}
     </div>
   );
 }
@@ -5528,18 +5547,19 @@ function ExerciseTechniqueSteps({ steps }) {
 }
 
 function ExerciseTechniqueStepFields({ steps, onChange }) {
+  const { t } = useTranslation("screens");
   const fields = Array.from({ length: Math.max(3, steps.length) }, (_, index) => steps[index] ?? "");
 
   return (
     <fieldset className="form-field technique-step-fields">
-      <legend className="form-label-text">Описание техники</legend>
+      <legend className="form-label-text">{t("technique.description")}</legend>
       {fields.map((step, index) => (
         <label className="technique-step-field" key={index}>
           <span className="technique-step-number" aria-hidden="true">{index + 1}.</span>
           <textarea
             className="form-input technique-step-input"
-            aria-label={`Шаг ${index + 1}`}
-            placeholder="Описание шага"
+            aria-label={t("technique.step", { index: index + 1 })}
+            placeholder={t("technique.stepPlaceholder")}
             rows={2}
             value={step}
             onChange={(event) => {
@@ -5551,13 +5571,14 @@ function ExerciseTechniqueStepFields({ steps, onChange }) {
         </label>
       ))}
       <button className="action-button secondary-action" type="button" onClick={() => onChange([...fields, ""])}>
-        Добавить шаг
+        {t("technique.addStep")}
       </button>
     </fieldset>
   );
 }
 
 function ExerciseMediaFields({ value, onChange }) {
+  const { t } = useTranslation("screens");
   const media = getExerciseMedia(value);
   return (
     <>
@@ -5568,36 +5589,35 @@ function ExerciseMediaFields({ value, onChange }) {
             type="text"
             name="exerciseMediaUrl"
             value={value}
-            aria-label="Ссылка на GIF или YouTube"
-            placeholder="Ссылка на GIF или YouTube"
+            aria-label={t("technique.link")}
+            placeholder={t("technique.link")}
             inputMode="url"
             autoComplete="off"
             autoCapitalize="none"
             spellCheck={false}
             onChange={onChange}
           />
-          <InfoNotice label="Как добавить ссылку на технику">
+          <InfoNotice label={t("technique.linkHelp")}>
             <p>
-              В YouTube открой видео или Shorts, нажми «Поделиться» и скопируй ссылку.
+              {t("technique.youtubeHelp")}
             </p>
             <p>
-              Для GIF нажми и удерживай изображение в браузере, затем выбери
-              «Копировать адрес изображения» и вставь ссылку в это поле.
+              {t("technique.gifHelp")}
             </p>
           </InfoNotice>
         </div>
       </div>
       <div className="form-field">
-        <span className="form-label-text">Предпросмотр</span>
+        <span className="form-label-text">{t("technique.preview")}</span>
         {media.type === "gif" ? (
           <ExerciseGifPreview key={media.src} src={media.src} />
         ) : media.type === "youtube" ? (
           <div className={`exercise-media-preview${media.isShort ? " is-short" : ""}`}>
-            <ExerciseYouTubePlayer media={media} title="Предпросмотр видео техники" />
+            <ExerciseYouTubePlayer media={media} title={t("technique.previewTitle")} />
           </div>
         ) : (
           <div className={`exercise-media-preview${media.type === "invalid" ? " is-error" : ""}`}>
-            <span>{media.type === "empty" ? "Ссылка ещё не добавлена" : "Проверьте ссылку на технику."}</span>
+            <span>{media.type === "empty" ? t("technique.noLink") : t("technique.invalidLink")}</span>
           </div>
         )}
       </div>
@@ -5606,6 +5626,7 @@ function ExerciseMediaFields({ value, onChange }) {
 }
 
 function ExerciseTechniqueScreen({ exercise, onBack, onSave }) {
+  const { t } = useTranslation("screens");
   const [techniqueSteps, setTechniqueSteps] = useState(() => getTechniqueSteps(exercise?.techniqueDescription));
   const [mediaUrl, setMediaUrl] = useState(exercise?.mediaUrl ?? "");
   const [isEditing, setIsEditing] = useState(false);
@@ -5629,7 +5650,7 @@ function ExerciseTechniqueScreen({ exercise, onBack, onSave }) {
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>Техника упражнения</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{t("technique.title")}</ScreenTitle>
       </header>
       {exercise ? (
         <form className="template-form" onSubmit={handleSubmit}>
@@ -5637,7 +5658,7 @@ function ExerciseTechniqueScreen({ exercise, onBack, onSave }) {
             <div className="section-title">
               <h2>{exercise.name}</h2>
               <EditIconButton
-                label={isEditing ? "Показать описание техники" : "Редактировать описание техники"}
+                label={isEditing ? t("technique.showDescription") : t("technique.editDescription")}
                 onClick={() => setIsEditing((editing) => !editing)}
               />
             </div>
@@ -5646,30 +5667,31 @@ function ExerciseTechniqueScreen({ exercise, onBack, onSave }) {
             ) : steps.length ? (
               <ExerciseTechniqueSteps steps={steps} />
             ) : (
-              <p className="form-label-text">Описание техники ещё не добавлено.</p>
+              <p className="form-label-text">{t("technique.noDescription")}</p>
             )}
           </section>
           <ExerciseMediaFields value={mediaUrl} onChange={(event) => setMediaUrl(event.target.value)} />
           <button className="action-button" type="submit" disabled={isSaving}>
-            <span>Сохранить технику</span>
+            <span>{t("technique.save")}</span>
           </button>
         </form>
       ) : (
-        <div className="panel">Упражнение не найдено</div>
+        <div className="panel">{t("common.exerciseNotFound")}</div>
       )}
     </section>
   );
 }
 
 function ExerciseFormScreen({
-  planView, draft, onBack, onNameChange, onMediaUrlChange, onTechniqueStepsChange,
+  exercise, planView, draft, onBack, onNameChange, onMediaUrlChange, onTechniqueStepsChange,
   onSave, onDelete, onOpenHistory, onOpenTechniqueEditor,
 }) {
+  const { t } = useTranslation("screens");
   const isEdit = planView.name === "editExercise";
   return (
     <section className="screen plan-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>{isEdit ? "Редактировать упр" : `Новое упражнение`}</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{isEdit ? t("exercises.editTitle") : t("exercises.newTitle")}</ScreenTitle>
       </header>
 
       <form className="template-form" onSubmit={onSave}>
@@ -5679,16 +5701,15 @@ function ExerciseFormScreen({
               className="form-input"
               type="text"
               name="exerciseName"
-              value={draft.name}
-              placeholder="Название упражнения"
+              value={draft.name ?? exercise?.name ?? ""}
+              placeholder={t("exercises.name")}
               autoComplete="off"
               onChange={onNameChange}
             />
             {isEdit ? (
-              <InfoNotice label="Описание переименования упражнения">
+              <InfoNotice label={t("exercises.renameHelp")}>
                 <p>
-                  История весов и повторов останется привязана к этому упражнению. Если это другое
-                  движение, создай новое упражнение вместо переименования.
+                  {t("exercises.renameDescription")}
                 </p>
               </InfoNotice>
             ) : null}
@@ -5697,7 +5718,7 @@ function ExerciseFormScreen({
 
         {isEdit ? (
           <button className="action-button secondary-action" type="button" onClick={onOpenTechniqueEditor}>
-            <span>Техника упражнения</span>
+            <span>{t("technique.title")}</span>
           </button>
         ) : (
           <>
@@ -5708,17 +5729,17 @@ function ExerciseFormScreen({
 
         {isEdit ? (
           <button className="action-button secondary-action" type="button" onClick={() => onOpenHistory(planView.exerciseId)}>
-            <span>История упражнения</span>
+            <span>{t("exercises.history")}</span>
           </button>
         ) : null}
 
         <button className="action-button" type="submit">
-          <span>Сохранить упражнение</span>
+          <span>{t("exercises.save")}</span>
         </button>
 
         {isEdit ? (
           <button className="action-button danger-action" type="button" onClick={onDelete}>
-            <span>Удалить упражнение</span>
+            <span>{t("exercises.delete")}</span>
           </button>
         ) : null}
       </form>
@@ -5761,11 +5782,13 @@ function JournalSetInput({ value, placeholder, inputMode, label, onChange }) {
 }
 
 function JournalSetList({ sets, exerciseName, onChangeValue, onRemoveSet }) {
+  const { t } = useTranslation("screens");
+  const weightUnit = useWeightUnit();
   return (
     <ol className="journal-set-list">
       {sets.map((set, index) => (
         <li key={set.rowId ?? index}>
-          <span>{set.setNumber ?? index + 1} подход</span>
+          <span>{t("journal.setLabel", { index: set.setNumber ?? index + 1 })}</span>
           {onChangeValue ? (
             <>
               <strong>
@@ -5773,26 +5796,26 @@ function JournalSetList({ sets, exerciseName, onChangeValue, onRemoveSet }) {
                   value={set.enteredValues?.weightKg ?? ""}
                   placeholder={formatWeightInput(set.weightKg)}
                   inputMode="decimal"
-                  label={`Вес в подходе ${index + 1}: ${exerciseName}`}
+                  label={t("journal.weight", { index: index + 1, name: exerciseName })}
                   onChange={(value) => onChangeValue(index, "weightKg", value)}
                 />
-                {" кг × "}
+                {` ${weightUnit} × `}
                 <JournalSetInput
                   value={set.enteredValues?.reps ?? ""}
                   placeholder={String(set.reps ?? "")}
                   inputMode="numeric"
-                  label={`Повторы в подходе ${index + 1}: ${exerciseName}`}
+                  label={t("journal.reps", { index: index + 1, name: exerciseName })}
                   onChange={(value) => onChangeValue(index, "reps", value)}
                 />
               </strong>
               <button
                 className="active-set-remove-button journal-set-remove-button"
                 type="button"
-                aria-label={`Удалить подход ${index + 1}: ${exerciseName}`}
+                aria-label={t("journal.removeSet", { index: index + 1, name: exerciseName })}
                 onClick={() => onRemoveSet(index)}
               />
             </>
-          ) : <strong>{formatWorkoutSet(set)}</strong>}
+          ) : <strong>{formatWorkoutSet(set, weightUnit)}</strong>}
         </li>
       ))}
     </ol>
@@ -5800,13 +5823,16 @@ function JournalSetList({ sets, exerciseName, onChangeValue, onRemoveSet }) {
 }
 
 function ExerciseHistoryScreen({ data, exerciseId, exerciseName, visibleCount, onBack, onShowMore }) {
+  const { t, i18n } = useTranslation("screens");
   const history = useMemo(() => buildExerciseHistory(data, exerciseId), [data, exerciseId]);
-  const name = exerciseName ?? data.exercises.find((exercise) => exercise.id === exerciseId)?.name;
+  const name = exerciseName == null
+    ? data.exercises.find((exercise) => exercise.id === exerciseId)?.name
+    : localizeExerciseName(exerciseId, exerciseName, i18n.resolvedLanguage);
 
   return (
     <section className="screen journal-detail-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>История упр</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{t("exercises.history")}</ScreenTitle>
         {name ? <p className="screen-subtitle">{name}</p> : null}
       </header>
       {history.length ? (
@@ -5823,13 +5849,13 @@ function ExerciseHistoryScreen({ data, exerciseId, exerciseName, visibleCount, o
               type="button"
               onClick={onShowMore}
             >
-              Показать ещё
+              {t("common.showMore")}
             </button>
           ) : null}
         </>
       ) : (
         <div className="empty-state compact-empty-state">
-          <h2>Записанных подходов пока нет</h2>
+          <h2>{t("journal.noSets")}</h2>
         </div>
       )}
     </section>
@@ -5849,6 +5875,7 @@ function JournalView({
   onToggleFilterExercise,
   onToggleFilterMuscleGroup,
 }) {
+  const { t } = useTranslation("screens");
   const hasActiveFilter = Boolean(journalFilter.selectedMuscleGroupIds?.length);
   const needsFilterOptions = hasActiveFilter || journalView.name === "filter";
   const allEntries = useMemo(() => buildJournalEntries(data), [data]);
@@ -5879,14 +5906,14 @@ function JournalView({
     <section className="screen journal-screen">
       <header className="screen-header">
         <div className="journal-overview-title-row">
-          <h1>Журнал</h1>
+          <h1>{t("nav.journal", { ns: "app" })}</h1>
           <div className="journal-overview-actions">
             <button
               className={`journal-filter-button${hasActiveFilter ? " is-active" : ""}`}
               type="button"
               onClick={onOpenFilter}
             >
-              <span>Фильтр</span>
+              <span>{t("journal.filter")}</span>
             </button>
             {hasActiveFilter ? (
               <button
@@ -5894,7 +5921,7 @@ function JournalView({
                 type="button"
                 onClick={onClearFilter}
               >
-                <span>Сбросить</span>
+                <span>{t("journal.reset")}</span>
               </button>
             ) : null}
           </div>
@@ -5918,13 +5945,13 @@ function JournalView({
                     <div key={section.muscleGroup.id} className="journal-card-group">
                       <strong>
                         {section.muscleGroup.name}
-                        {section.templateName && section.templateName !== "Шаблон не указан" ? (
+                        {section.templateName && section.templateName !== t("domain:templateNotSpecified") ? (
                           <span className="journal-card-template">: {section.templateName}</span>
                         ) : null}
                       </strong>
                       <p>
                         {section.exercises.map((exercise) => exercise.name).join(" · ") ||
-                          "Нет списка упражнений"}
+                          t("previous.noExercises")}
                       </p>
                     </div>
                   ))}
@@ -5934,17 +5961,17 @@ function JournalView({
           })}
           {entries.length > visibleCount ? (
             <button className="action-button secondary-action journal-show-more" type="button" onClick={onShowMore}>
-              Показать ещё
+              {t("common.showMore")}
             </button>
           ) : null}
         </div>
       ) : (
         <div className="empty-state compact-empty-state journal-empty-state">
-          <h2>{allEntries.length ? "По фильтру ничего не найдено" : "Пока нет завершённых тренировок"}</h2>
+          <h2>{allEntries.length ? t("journal.noFilterResults") : t("journal.noWorkouts")}</h2>
           <p>
             {allEntries.length
-              ? "Измени выбранные мышцы или упражнения."
-              : "После завершения тренировки, записи появятся здесь."}
+              ? t("journal.adjustFilter")
+              : t("journal.emptyWorkoutsHint")}
           </p>
         </div>
       )}
@@ -5962,6 +5989,7 @@ function JournalFilterScreen({
   onToggleExercise,
   onToggleMuscleGroup,
 }) {
+  const { t } = useTranslation("screens");
   const shouldReduceMotion = useReducedMotion();
   const [searchQueries, setSearchQueries] = useState({});
   const selectedMuscleGroupIds = filter.selectedMuscleGroupIds ?? [];
@@ -5988,12 +6016,12 @@ function JournalFilterScreen({
   return (
     <section className="screen journal-filter-screen">
       <header className="screen-header">
-        <ScreenTitle onBack={onBack}>Фильтр</ScreenTitle>
+        <ScreenTitle onBack={onBack}>{t("journal.filter")}</ScreenTitle>
       </header>
 
       <section className="panel plan-section">
         <div className="section-title">
-          <span>Группы мышц</span>
+          <span>{t("prep.muscleGroups")}</span>
         </div>
         <div className="muscle-chip-list">
           {filterOptions.map((option) => {
@@ -6046,12 +6074,12 @@ function JournalFilterScreen({
               >
                 <div className="section-title">
                   <span>{option.muscleGroup.name}</span>
-                  <span>База упражнений</span>
+                  <span>{t("builder.exerciseLibrary")}</span>
                 </div>
                 <SearchField
                   value={searchQuery}
                   onChange={(value) => handleSearchChange(muscleGroupId, value)}
-                  placeholder="Поиск упражнения"
+                  placeholder={t("builder.searchExercises")}
                 />
                 <div className="template-builder-scroll">
                   {exercises.length ? (
@@ -6074,7 +6102,7 @@ function JournalFilterScreen({
                     </div>
                   ) : (
                     <div className="template-builder-empty">
-                      {option.exercises.length ? "Ничего не найдено" : "Нет упражнений для фильтра"}
+                      {option.exercises.length ? t("common.noSearchResults") : t("journal.noFilterExercises")}
                     </div>
                   )}
                 </div>
@@ -6092,7 +6120,7 @@ function JournalFilterScreen({
           onClick={onApply}
         >
           <span>
-            Применить фильтр{hasActiveFilter ? ` · ${resultCount}` : ""}
+            {t("journal.applyFilter", { results: hasActiveFilter ? ` · ${resultCount}` : "" })}
           </span>
         </button>
         <button
@@ -6101,7 +6129,7 @@ function JournalFilterScreen({
           disabled={!hasActiveFilter}
           onClick={onClear}
         >
-          <span>Сбросить</span>
+          <span>{t("journal.reset")}</span>
         </button>
       </div>
     </section>
@@ -6109,6 +6137,7 @@ function JournalFilterScreen({
 }
 
 function JournalSetEditor({ sets, exerciseName, onChange, disabled }) {
+  const { t } = useTranslation("screens");
   function changeValue(index, field, value) {
     const isWeight = field === "weightKg";
     const pattern = isWeight ? /^\d*(?:[.,]\d*)?$/ : /^\d*$/;
@@ -6133,7 +6162,7 @@ function JournalSetEditor({ sets, exerciseName, onChange, disabled }) {
   }
 
   return (
-    <fieldset className="journal-set-editor" disabled={disabled} aria-label={`Подходы: ${exerciseName}`}>
+    <fieldset className="journal-set-editor" disabled={disabled} aria-label={t("journal.setsForExercise", { name: exerciseName })}>
       {sets.length ? (
         <JournalSetList
           sets={sets}
@@ -6141,15 +6170,16 @@ function JournalSetEditor({ sets, exerciseName, onChange, disabled }) {
           onChangeValue={changeValue}
           onRemoveSet={removeSet}
         />
-      ) : <p className="journal-empty-sets">Подходы не выполнены</p>}
+      ) : <p className="journal-empty-sets">{t("journal.setsNotDone")}</p>}
       <button className="action-button secondary-action" type="button" onClick={addSet}>
-        Добавить подход
+        {t("active.addSet")}
       </button>
     </fieldset>
   );
 }
 
 function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave }) {
+  const { t } = useTranslation("screens");
   const [draft, setDraft] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const savingRef = useRef(false);
@@ -6160,8 +6190,8 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave })
     return (
       <section className="screen journal-detail-screen">
         <div className="empty-state error-state">
-          <ScreenTitle onBack={onBack}>Запись не найдена</ScreenTitle>
-          <p>Вернись в журнал и выбери тренировку ещё раз.</p>
+          <ScreenTitle onBack={onBack}>{t("journal.recordNotFound")}</ScreenTitle>
+          <p>{t("journal.reselectWorkout")}</p>
         </div>
       </section>
     );
@@ -6226,9 +6256,9 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave })
         <section key={section.muscleGroup.id} className="journal-detail-group">
           <div className="journal-muscle-header">
             <h2>{section.muscleGroup.name}</h2>
-            {section.templateName && section.templateName !== "Шаблон не указан" ? (
+            {section.templateName && section.templateName !== t("domain:templateNotSpecified") ? (
               <span className="journal-section-template">
-                Шаблон: {section.templateName}
+                {t("journal.template", { name: section.templateName })}
               </span>
             ) : null}
           </div>
@@ -6241,7 +6271,7 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave })
                   {exercise.isReplacement ? (
                     <>
                       <span className="journal-replacement-divider">|</span>
-                      <span className="journal-replacement-note">вместо: {exercise.plannedName}</span>
+                      <span className="journal-replacement-note">{t("journal.replaced", { name: exercise.plannedName })}</span>
                     </>
                   ) : null}
                 </h2>
@@ -6256,7 +6286,7 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave })
                 ) : exercise.sets.length ? (
                   <JournalSetList sets={exercise.sets} />
                 ) : (
-                  <p className="journal-empty-sets">Подходы не выполнены</p>
+                  <p className="journal-empty-sets">{t("journal.setsNotDone")}</p>
                 )}
               </article>
             ))}
@@ -6268,21 +6298,21 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave })
         {draft ? (
           <>
             <button className="action-button" type="button" onClick={saveChanges} disabled={isSaving || !draft.changes.size}>
-              {isSaving ? "Сохраняю…" : "Сохранить"}
+              {isSaving ? t("common.saving") : t("common.save")}
             </button>
             <button className="action-button secondary-action" type="button" onClick={() => setDraft(null)} disabled={isSaving}>
-              Отмена
+              {t("common.cancel")}
             </button>
           </>
         ) : (
           <>
             {canEdit ? (
               <button className="action-button secondary-action" type="button" onClick={startEditing}>
-                Редактировать тренировку
+                {t("journal.editWorkout")}
               </button>
             ) : null}
             <button className="action-button danger-action" type="button" onClick={() => onDelete(details.id)}>
-              Удалить тренировку
+              {t("plan.deleteWorkout")}
             </button>
           </>
         )}
@@ -6389,6 +6419,7 @@ function BottomSheet({ ariaLabel, backdropLabel, className = "", onClose, childr
 }
 
 function ImportOptionsDialog({ draft, onClose, onImport }) {
+  const { t } = useTranslation("screens");
   const formId = useId();
   const [selectedStores, setSelectedStores] = useState(() => Object.keys(IMPORT_OPTIONS));
   const shouldReduceMotion = useReducedMotion();
@@ -6402,7 +6433,7 @@ function ImportOptionsDialog({ draft, onClose, onImport }) {
 
   return (
     <ModalDialog
-      title="Что импортировать?"
+      title={t("import.title")}
       onClose={onClose}
       actions={(
         <ConfirmationActions
@@ -6422,10 +6453,10 @@ function ImportOptionsDialog({ draft, onClose, onImport }) {
           onImport(selectedStores);
         }}
       >
-        <p>Отмеченные разделы будут заменены данными из файла. Незавершённые тренировки будут удалены.</p>
+        <p>{t("import.description")}</p>
         {draft.error ? <p className="import-error" role="alert">{draft.error}</p> : null}
-        <fieldset className="import-options" disabled={isBusy} aria-label="Разделы для импорта">
-          {Object.entries(IMPORT_OPTIONS).map(([storeName, label]) => {
+        <fieldset className="import-options" disabled={isBusy} aria-label={t("import.sections")}>
+          {Object.entries(IMPORT_OPTIONS).map(([storeName, labelKey]) => {
             const isSelected = selectedStores.includes(storeName);
 
             return (
@@ -6450,7 +6481,7 @@ function ImportOptionsDialog({ draft, onClose, onImport }) {
                     ) : null}
                   </AnimatePresence>
                 </span>
-                <span>{label}</span>
+                <span>{t(labelKey, { ns: "app" })}</span>
                 <span className="import-option-count">{draft.counts[storeName]}</span>
               </label>
             );
@@ -6462,6 +6493,7 @@ function ImportOptionsDialog({ draft, onClose, onImport }) {
 }
 
 function ExerciseTechniqueSheet({ viewer, onClose }) {
+  const { t } = useTranslation("screens");
   const media = getExerciseMedia(viewer.mediaUrl);
   const steps = getTechniqueSteps(viewer.techniqueDescription);
   const showsDefaultVideo = media.type === "youtube" && initialData.exercises.some(
@@ -6471,8 +6503,8 @@ function ExerciseTechniqueSheet({ viewer, onClose }) {
   return (
     <BottomSheet
       className="exercise-technique-sheet"
-      ariaLabel={`Техника упражнения ${viewer.name}`}
-      backdropLabel="Закрыть просмотр техники"
+      ariaLabel={t("technique.exerciseTitle", { name: viewer.name })}
+      backdropLabel={t("technique.close")}
       onClose={onClose}
     >
       <div className="exercise-technique-content">
@@ -6483,7 +6515,7 @@ function ExerciseTechniqueSheet({ viewer, onClose }) {
           <ExerciseTechniqueMedia key={viewer.mediaUrl} media={media} name={viewer.name} />
           {showsDefaultVideo && (
             <p className="exercise-technique-note">
-              По умолчанию подгружен ролик из открытого доступа YouTube. Вы можете указать ссылку на любое другое видео в настройках упражнения.
+              {t("technique.defaultVideoNote")}
             </p>
           )}
           {steps.length ? <ExerciseTechniqueSteps steps={steps} /> : null}
@@ -6511,6 +6543,7 @@ function ExerciseYouTubePlayer({ media, title }) {
 }
 
 function ExerciseTechniqueMedia({ media, name }) {
+  const { t } = useTranslation("screens");
   const [hasError, setHasError] = useState(false);
 
   if (media.type !== "gif" && media.type !== "youtube") {
@@ -6520,13 +6553,13 @@ function ExerciseTechniqueMedia({ media, name }) {
   return (
     <div className={`exercise-technique-media${hasError ? " is-error" : ""}`}>
       {hasError ? (
-        <span>Не удалось загрузить GIF. Проверьте ссылку.</span>
+        <span>{t("technique.gifError")}</span>
       ) : media.type === "youtube" ? (
-        <ExerciseYouTubePlayer media={media} title={`Видео техники упражнения ${name}`} />
+        <ExerciseYouTubePlayer media={media} title={t("technique.videoTitle", { name })} />
       ) : (
         <img
           src={media.src}
-          alt={`Техника упражнения ${name}`}
+          alt={t("technique.exerciseTitle", { name })}
           loading="lazy"
           decoding="async"
           onError={() => setHasError(true)}
@@ -6537,6 +6570,7 @@ function ExerciseTechniqueMedia({ media, name }) {
 }
 
 function TemplateSelector({ data, selector, onClose, onSelect }) {
+  const { t } = useTranslation("screens");
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
   const details = useMemo(
@@ -6550,7 +6584,7 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
 
     return details.templates.filter((template) => matchesSearchValue(template.name, normalizedSearchQuery));
   }, [details.templates, normalizedSearchQuery]);
-  const emptyText = details.templates.length ? "Ничего не найдено" : "Шаблонов ещё нет";
+  const emptyText = details.templates.length ? t("common.noSearchResults") : t("templates.empty");
 
   if (!data || !selector) {
     return null;
@@ -6563,11 +6597,11 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
 
   return (
     <BottomSheet
-      ariaLabel="Выбор шаблона"
-      backdropLabel="Закрыть выбор шаблона"
+      ariaLabel={t("templates.choose")}
+      backdropLabel={t("templates.close")}
       onClose={onClose}
     >
-      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск шаблона" />
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder={t("templates.search")} />
       <div className="template-select-list">
         {filteredTemplates.length ? (
           filteredTemplates.map((template) => (
@@ -6592,6 +6626,7 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
 }
 
 function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSelect }) {
+  const { t } = useTranslation("screens");
   const [searchQuery, setSearchQuery] = useState("");
   const normalizedSearchQuery = useMemo(() => normalizeSearchValue(searchQuery), [searchQuery]);
   const exerciseLog = selector && session ? session.exerciseLogs?.[selector.exerciseIndex] : null;
@@ -6629,7 +6664,7 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
 
     return exercises.filter((exercise) => matchesSearchValue(exercise.name, normalizedSearchQuery));
   }, [exercises, normalizedSearchQuery]);
-  const emptyText = exercises.length ? "Ничего не найдено" : "В базе нет упражнений";
+  const emptyText = exercises.length ? t("common.noSearchResults") : t("builder.emptyLibrary");
 
   if (!data || !selector || !session) {
     return null;
@@ -6641,23 +6676,23 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
 
   return (
     <BottomSheet
-      ariaLabel="Замена упражнения"
-      backdropLabel="Закрыть выбор упражнения"
+      ariaLabel={t("replacement.title")}
+      backdropLabel={t("replacement.close")}
       onClose={onClose}
     >
-      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder="Поиск упражнения" />
+      <SearchField value={searchQuery} onChange={setSearchQuery} placeholder={t("builder.searchExercises")} />
       <div className="template-select-list">
         {filteredExercises.length ? (
           filteredExercises.map((exercise) => {
             const isDisabled = exercise.isCurrent || exercise.isUsedInWorkout;
             const status = exercise.isCurrent
-              ? "Текущее"
+              ? t("replacement.current")
               : exercise.isUsedInWorkout
                 ? exercise.isInPlan
-                  ? "В плане"
-                  : "Уже выбрано"
+                  ? t("replacement.inPlan")
+                  : t("replacement.selected")
                 : exercise.isInPlan
-                  ? "По плану"
+                  ? t("replacement.planned")
                   : null;
 
             return (

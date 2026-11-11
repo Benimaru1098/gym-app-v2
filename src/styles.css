@@ -39,7 +39,7 @@
   --success: #56d68a;
   --success-soft: rgba(86, 214, 138, 0.14);
   --success-line: rgba(86, 214, 138, 0.36);
-  --danger: #ff5c6c;
+  --danger: #e25261;
   --danger-soft: rgba(255, 92, 108, 0.14);
   --danger-line: rgba(255, 92, 108, 0.36);
   --shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
@@ -324,6 +324,7 @@ h2 {
 
 .workout-card[data-illustration="my_plan"] {
   --illustration-max-width: 50%;
+  --illustration-height: calc(100% + 4px);
 }
 
 .workout-card::before {
@@ -439,28 +440,28 @@ h2 {
   font-weight: 500;
 }
 
-.theme-options {
+.settings-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   isolation: isolate;
 }
 
-.theme-option,
-.theme-option-indicator {
+.settings-option,
+.settings-option-indicator {
   grid-row: 1;
 }
 
-.theme-option[aria-pressed="true"] {
+.settings-option[aria-pressed="true"] {
   color: #fff;
 }
 
-.theme-option > span {
+.settings-option > span {
   position: relative;
   z-index: 2;
 }
 
-.theme-option-indicator {
+.settings-option-indicator {
   z-index: 1;
   border-radius: 8px;
   background: var(--accent);
@@ -1089,7 +1090,6 @@ button.journal-card:active {
 .journal-card-header {
   display: flex;
   align-items: center;
-  gap: 14px;
   min-width: 0;
   padding: 15px;
   border-bottom: 1px solid var(--line);
@@ -1102,6 +1102,7 @@ button.journal-card:active {
   min-width: 0;
   padding-right: 14px;
   border-right: 1px solid var(--line);
+  margin-right: 14px;
 }
 
 .journal-card-date strong {

@@ -1,0 +1,44 @@
+{
+  "workout": "Workout",
+  "freeWorkout": "Custom Workout",
+  "muscleGroup": "Muscle group",
+  "templateNotSpecified": "No template",
+  "templateNotFound": "Template not found",
+  "exercise": "Exercise",
+  "plannedExercise": "Planned exercise",
+  "exerciseNotFound": "Exercise not found",
+  "muscleGroups": {
+    "chest": "Chest",
+    "biceps": "Biceps",
+    "back": "Back",
+    "triceps": "Triceps",
+    "legs": "Legs",
+    "shoulders": "Shoulders"
+  },
+  "templateNames": {
+    "standard": "Standard",
+    "alternative": "Alternative",
+    "accessory": "Accessory",
+    "pressFocused": "Press-Focused",
+    "light": "Light"
+  },
+  "advice": {
+    "insufficientHistory": "Complete this exercise at least twice to get a recommendation.",
+    "longBreak": "It's been a while. Use the same weight as last time or go slightly lighter.",
+    "laterPosition": "You're doing this exercise later in the workout today. Stick with your current weight.",
+    "increaseTooHeavy": "Go back to your previous weight and build up your reps again.",
+    "addRep": "Keep the same weight and try adding one rep.",
+    "lastWorkoutWeaker": "Your performance dropped last time. Start with the last weight you could lift for 8–10 reps.",
+    "repeatedBelowRange": "This weight is still a bit heavy. Go back to a weight you can lift for 8–10 reps.",
+    "stronglyBelowRange": "Go back to a weight you can lift for 8–10 reps.",
+    "belowRange": "Keep your current working weight and aim for at least 8 reps.",
+    "sharpSetDrop": "Try resting longer between heavy sets or stopping short of failure on your first heavy set.",
+    "unstableUpperRange": "Keep the same weight and aim for at least 10 reps on each heavy set.",
+    "stableUpperRange": "Try increasing your working weight by 20% for sets of 8–10 reps.",
+    "upperRangeReached": "You're close to the top of the rep range. Repeat the same weight and reps to build consistency.",
+    "fallingResult": "Use the same weight as last time, or go slightly lighter if you still can't reach 8 reps.",
+    "stagnantResult": "Keep the same weight and try adding one rep to at least one heavy set.",
+    "earlierPosition": "You're doing this exercise earlier in the workout today. Try to beat your last result.",
+    "default": "Use the same weight and aim for consistent reps across your working sets."
+  }
+}

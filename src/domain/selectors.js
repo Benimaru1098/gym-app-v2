@@ -1,4 +1,11 @@
 import { isProtectedTemplate } from "./templateRules.js";
+import {
+  localizeExerciseName,
+  localizeMuscleGroupName,
+  localizeTemplateName,
+  localizeWorkoutName,
+} from "../i18n/catalog.js";
+import { t } from "../i18n/index.js";
 
 export const FREE_WORKOUT_GROUP_ID = "free-full-body";
 export const FREE_WORKOUT_NAME = "Свой план";
@@ -40,7 +47,8 @@ function isWorkoutLogForGroup(log, workoutGroup) {
     return hasMatchingCombination;
   }
 
-  return log.workoutGroupSnapshot?.name === workoutGroup.name;
+  const snapshotName = log.workoutGroupSnapshot?.name;
+  return snapshotName === (workoutGroup.storedName ?? workoutGroup.name);
 }
 
 function getWorkoutLogDate(log) {
@@ -131,7 +139,7 @@ export function getLastSetsForExercise(data, exerciseId) {
   return [];
 }
 
-function getTemplateSnapshots(log) {
+export function getTemplateSnapshots(log) {
   if (Array.isArray(log.templateSnapshots)) {
     return log.templateSnapshots;
   }
@@ -225,7 +233,11 @@ function getExerciseNamesFromSnapshot(snapshot) {
 }
 
 function createJournalLookup(data) {
+  const locale = data.locale ?? "ru";
   return {
+    locale,
+    missingMuscleName: t("domain:muscleGroup", { lng: locale }),
+    missingTemplateName: t("domain:templateNotSpecified", { lng: locale }),
     workoutGroupsById: indexById(data.workoutGroups ?? []),
     muscleGroupsById: indexById(data.muscleGroups ?? []),
     templatesById: indexById(data.exerciseTemplates ?? []),
@@ -233,15 +245,18 @@ function createJournalLookup(data) {
   };
 }
 
-function getWorkoutLogName({ workoutGroupsById }, log) {
+function getWorkoutLogName({ workoutGroupsById, locale }, log) {
   const workoutGroupId = getWorkoutLogGroupId(log);
+  const snapshotName = log.workoutGroupSnapshot?.name ?? log.workoutGroupNameSnapshot;
+  if (snapshotName !== undefined && snapshotName !== null) {
+    if (workoutGroupId === FREE_WORKOUT_GROUP_ID && snapshotName === FREE_WORKOUT_NAME) {
+      return t("domain:freeWorkout", { lng: locale });
+    }
 
-  return (
-    log.workoutGroupSnapshot?.name ??
-    log.workoutGroupNameSnapshot ??
-    (workoutGroupId ? workoutGroupsById.get(workoutGroupId)?.name : null) ??
-    "Тренировка"
-  );
+    return localizeWorkoutName(workoutGroupId, snapshotName, log.workoutGroupSnapshot?.muscleGroupIds, locale);
+  }
+
+  return workoutGroupsById.get(workoutGroupId)?.name ?? t("domain:workout", { lng: locale });
 }
 
 function getMuscleGroupSnapshot(log, muscleGroupId) {
@@ -278,32 +293,34 @@ function getJournalTemplateId(log, muscleGroupId, source = {}) {
   );
 }
 
-function getJournalSectionFallbacks({ muscleGroupsById, templatesById }, log, muscleGroupId, source = {}) {
+function getJournalSectionFallbacks(lookup, log, muscleGroupId, source = {}) {
+  const { locale, missingMuscleName, missingTemplateName, muscleGroupsById, templatesById } = lookup;
   const templateSnapshot = muscleGroupId ? getTemplateSnapshotForMuscleGroup(log, muscleGroupId) : null;
   const muscleGroupSnapshot = muscleGroupId ? getMuscleGroupSnapshot(log, muscleGroupId) : null;
   const currentMuscleGroup = muscleGroupId ? muscleGroupsById.get(muscleGroupId) : null;
   const templateId = getJournalTemplateId(log, muscleGroupId, source);
   const currentTemplate = templateId ? templatesById.get(templateId) : null;
 
+  const muscleGroupName =
+    source.muscleGroupNameSnapshot ??
+    source.muscleGroup?.name ??
+    templateSnapshot?.muscleGroupNameSnapshot ??
+    templateSnapshot?.muscleGroup?.name ??
+    muscleGroupSnapshot?.name ??
+    currentMuscleGroup?.name;
+  const templateName =
+    currentTemplate?.name ??
+    source.templateNameSnapshot ??
+    source.templateName ??
+    source.exerciseTemplateName ??
+    templateSnapshot?.templateNameSnapshot ??
+    templateSnapshot?.templateName ??
+    templateSnapshot?.name;
+
   return {
     templateId,
-    muscleGroupName:
-      source.muscleGroupNameSnapshot ??
-      source.muscleGroup?.name ??
-      templateSnapshot?.muscleGroupNameSnapshot ??
-      templateSnapshot?.muscleGroup?.name ??
-      muscleGroupSnapshot?.name ??
-      currentMuscleGroup?.name ??
-      "Мышца",
-    templateName:
-      currentTemplate?.name ??
-      source.templateNameSnapshot ??
-      source.templateName ??
-      source.exerciseTemplateName ??
-      templateSnapshot?.templateNameSnapshot ??
-      templateSnapshot?.templateName ??
-      templateSnapshot?.name ??
-      "Шаблон не указан",
+    muscleGroupName: localizeMuscleGroupName(muscleGroupId, muscleGroupName, locale) ?? missingMuscleName,
+    templateName: localizeTemplateName(templateId, templateName, locale) ?? missingTemplateName,
   };
 }
 
@@ -317,6 +334,7 @@ function normalizeJournalSet(set, index) {
 
 export function buildExerciseHistory(data, exerciseId) {
   const workoutGroupsById = indexById(data.workoutGroups ?? []);
+  const locale = data.locale ?? "ru";
 
   return (data.workoutLogs ?? [])
     .flatMap((log) => {
@@ -335,49 +353,49 @@ export function buildExerciseHistory(data, exerciseId) {
       return [{
         id: log.id,
         date: getWorkoutLogDate(log),
-        name: getWorkoutLogName({ workoutGroupsById }, log),
+        name: getWorkoutLogName({ workoutGroupsById, locale }, log),
         sets,
       }];
     })
     .sort((first, second) => (second.date?.getTime() ?? 0) - (first.date?.getTime() ?? 0));
 }
 
-function getJournalExerciseName(exercisesById, exerciseLog) {
-  return (
-    (exerciseLog.exerciseId ? exercisesById.get(exerciseLog.exerciseId)?.name : null) ??
+function getJournalExerciseName({ exercisesById, locale }, exerciseLog) {
+  const name =
+    exercisesById.get(exerciseLog.exerciseId)?.name ??
     exerciseLog.exerciseNameSnapshot ??
     exerciseLog.exerciseName ??
-    exerciseLog.name ??
-    "Упражнение"
-  );
+    exerciseLog.name;
+  return localizeExerciseName(exerciseLog.exerciseId, name, locale) ?? t("domain:exercise", { lng: locale });
 }
 
-function getJournalPlannedExerciseName(exercisesById, exerciseLog) {
+function getJournalPlannedExerciseName({ exercisesById, locale }, exerciseLog) {
   const plannedExerciseId =
     exerciseLog.plannedExerciseId ??
     exerciseLog.replacement?.plannedExerciseId ??
     null;
 
-  return (
-    (plannedExerciseId ? exercisesById.get(plannedExerciseId)?.name : null) ??
+  const name =
+    exercisesById.get(plannedExerciseId)?.name ??
     exerciseLog.plannedExerciseNameSnapshot ??
     exerciseLog.replacement?.plannedExerciseNameSnapshot ??
     exerciseLog.plannedExerciseName ??
-    null
-  );
+    null;
+  return localizeExerciseName(plannedExerciseId, name, locale);
 }
 
-function normalizeJournalSnapshotExercise(exercisesById, snapshotExercise, index) {
+function normalizeJournalSnapshotExercise({ exercisesById, locale }, snapshotExercise, index) {
   const exerciseId =
     typeof snapshotExercise === "object"
       ? snapshotExercise?.id ?? snapshotExercise?.exerciseId ?? null
       : null;
   const currentExercise = exerciseId ? exercisesById.get(exerciseId) : null;
+  const name = currentExercise?.name ?? getExerciseSnapshotName(snapshotExercise);
 
   return {
     id: exerciseId ?? `snapshot-${index}`,
     hasStableId: Boolean(exerciseId),
-    name: currentExercise?.name ?? getExerciseSnapshotName(snapshotExercise) ?? "Упражнение",
+    name: localizeExerciseName(exerciseId, name, locale) ?? t("domain:exercise", { lng: locale }),
     plannedExerciseId: null,
     plannedName: null,
     isReplacement: false,
@@ -394,11 +412,11 @@ export function getWorkoutLogExerciseKey(exerciseLog, groupId) {
   return name ? JSON.stringify([null, exerciseLog.muscleGroupId ?? groupId ?? null, name]) : null;
 }
 
-function normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails, groupId) {
+function normalizeJournalExercise(lookup, exerciseLog, index, includeDetails, groupId) {
   const summary = {
     id: exerciseLog.exerciseId ?? `exercise-${index}`,
     hasStableId: Boolean(exerciseLog.exerciseId),
-    name: getJournalExerciseName(exercisesById, exerciseLog),
+    name: getJournalExerciseName(lookup, exerciseLog),
   };
   if (!includeDetails) {
     return summary;
@@ -408,7 +426,7 @@ function normalizeJournalExercise(exercisesById, exerciseLog, index, includeDeta
     exerciseLog.plannedExerciseId ??
     exerciseLog.replacement?.plannedExerciseId ??
     null;
-  const plannedName = getJournalPlannedExerciseName(exercisesById, exerciseLog);
+  const plannedName = getJournalPlannedExerciseName(lookup, exerciseLog);
   const isReplacement = Boolean(
     exerciseLog.isReplacement ||
     exerciseLog.replacement ||
@@ -419,14 +437,14 @@ function normalizeJournalExercise(exercisesById, exerciseLog, index, includeDeta
     ...summary,
     editKey: getWorkoutLogExerciseKey(exerciseLog, groupId),
     plannedExerciseId,
-    plannedName: isReplacement ? plannedName ?? "Плановое упражнение" : null,
+    plannedName: isReplacement ? plannedName ?? t("domain:plannedExercise", { lng: lookup.locale }) : null,
     isReplacement,
     sets: (exerciseLog.sets ?? []).map(normalizeJournalSet),
   };
 }
 
 function buildJournalSections(lookup, log, includeDetails) {
-  const { exercisesById } = lookup;
+  const { missingMuscleName, missingTemplateName } = lookup;
   const sections = [];
   const sectionsById = new Map();
   let unknownSectionIndex = 0;
@@ -460,15 +478,15 @@ function buildJournalSections(lookup, log, includeDetails) {
       }
 
       if (
-        (existing.muscleGroup.name === "Мышца" || hasSnapshotMuscleName) &&
-        fallbacks.muscleGroupName !== "Мышца"
+        (existing.muscleGroup.name === missingMuscleName || hasSnapshotMuscleName) &&
+        fallbacks.muscleGroupName !== missingMuscleName
       ) {
         existing.muscleGroup.name = fallbacks.muscleGroupName;
       }
 
       if (
-        (existing.templateName === "Шаблон не указан" || hasSnapshotTemplateName) &&
-        fallbacks.templateName !== "Шаблон не указан"
+        (existing.templateName === missingTemplateName || hasSnapshotTemplateName) &&
+        fallbacks.templateName !== missingTemplateName
       ) {
         existing.templateName = fallbacks.templateName;
       }
@@ -515,7 +533,7 @@ function buildJournalSections(lookup, log, includeDetails) {
     if (Array.isArray(muscleLog.exerciseLogs)) {
       section.exercises.push(
         ...dedupeExerciseLogEntries(muscleLog.exerciseLogs).map((exerciseLog, index) =>
-          normalizeJournalExercise(exercisesById, exerciseLog, index, includeDetails, groupId),
+          normalizeJournalExercise(lookup, exerciseLog, index, includeDetails, groupId),
         ),
       );
     }
@@ -529,7 +547,7 @@ function buildJournalSections(lookup, log, includeDetails) {
     for (const exerciseLog of dedupeExerciseLogEntries(exerciseLogs)) {
       const section = ensureSection(exerciseLog.muscleGroupId, exerciseLog);
       section.exercises.push(
-        normalizeJournalExercise(exercisesById, exerciseLog, section.exercises.length, includeDetails),
+        normalizeJournalExercise(lookup, exerciseLog, section.exercises.length, includeDetails),
       );
     }
   }
@@ -545,7 +563,7 @@ function buildJournalSections(lookup, log, includeDetails) {
       : getExerciseNamesFromSnapshot(snapshot);
 
     section.exercises = snapshotExercises
-      .map((exercise, index) => normalizeJournalSnapshotExercise(exercisesById, exercise, index))
+      .map((exercise, index) => normalizeJournalSnapshotExercise(lookup, exercise, index))
       .filter((exercise) => exercise.name);
   }
 
@@ -606,7 +624,7 @@ export function buildJournalFilterOptions(data, entries = buildJournalEntries(da
       muscleGroup,
       isAvailable: exercisesByMuscleGroupId.has(muscleGroup.id),
       exercises: [...(exercisesByMuscleGroupId.get(muscleGroup.id)?.values() ?? [])].sort(
-        (first, second) => first.name.localeCompare(second.name, "ru"),
+        (first, second) => first.name.localeCompare(second.name, data.locale ?? "ru"),
       ),
     }));
 }
@@ -695,7 +713,7 @@ function buildTemplateExerciseItems(data, template, exercisesById) {
 
     return {
       id: exerciseId,
-      name: !isMissing ? exercise.name : "Упражнение не найдено",
+      name: !isMissing ? exercise.name : t("domain:exerciseNotFound", { lng: data.locale ?? "ru" }),
       mediaUrl: !isMissing ? exercise.mediaUrl ?? "" : "",
       isMissing,
       lastSets: getLastSetsForExercise(data, exerciseId),
@@ -803,7 +821,7 @@ export function buildFreeWorkoutCard(data) {
   };
 
   return {
-    workoutGroup,
+    workoutGroup: { ...workoutGroup, name: t("domain:freeWorkout", { lng: data.locale ?? "ru" }) },
     lastWorkoutDate: getLastWorkoutDateForGroup(data, workoutGroup)?.toISOString() ?? null,
   };
 }
@@ -938,7 +956,7 @@ export function buildWorkoutPreparationData(data, workoutGroupId) {
             }
           : {
               id: null,
-              name: "Шаблон не найден",
+              name: t("domain:templateNotFound", { lng: lookup.locale }),
               isMissing: true,
             },
         exercises,
@@ -956,12 +974,12 @@ export function buildWorkoutPreparationData(data, workoutGroupId) {
           const muscleGroupLog = getMuscleGroupLogForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
           const exerciseLogs = getExerciseLogEntriesForMuscleGroup(lastWorkoutLog, section.muscleGroup.id);
           const exerciseNamesFromLogs = exerciseLogs
-            .map((entry) => getJournalExerciseName(exercisesById, entry))
+            .map((entry) => getJournalExerciseName(lookup, entry))
             .filter(Boolean);
           const exerciseNames = Array.isArray(snapshot?.exercises)
             ? snapshot.exercises
                 .map((exercise, index) =>
-                  normalizeJournalSnapshotExercise(exercisesById, exercise, index).name,
+                  normalizeJournalSnapshotExercise(lookup, exercise, index).name,
                 )
                 .filter(Boolean)
             : getExerciseNamesFromSnapshot(snapshot);
@@ -1023,7 +1041,7 @@ export function buildTemplatesForMuscleGroup(data, muscleGroupId) {
 
         return {
           id: exerciseId,
-          name: exercise?.name ?? "Упражнение не найдено",
+          name: exercise?.name ?? t("domain:exerciseNotFound", { lng: data.locale ?? "ru" }),
           isMissing: !exercise,
         };
       }),

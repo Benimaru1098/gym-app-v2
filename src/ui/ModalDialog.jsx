@@ -1,14 +1,17 @@
 import { motion, useIsPresent, useReducedMotion } from "motion/react";
 import { useId, useLayoutEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 const hiddenDialog = { opacity: 0, scale: 0.98, y: 6 };
 const dialogTransition = { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
 
 export function ConfirmationActions({ onCancel, onConfirm, form, isBusy, confirmDisabled, danger }) {
+  const { t } = useTranslation("app");
+
   return (
     <>
       <button className="action-button secondary-action" type="button" onClick={onCancel} disabled={isBusy}>
-        Отмена
+        {t("dialog.cancel")}
       </button>
       <button
         className={`action-button${danger ? " danger-action" : ""}`}
@@ -17,7 +20,7 @@ export function ConfirmationActions({ onCancel, onConfirm, form, isBusy, confirm
         onClick={onConfirm}
         disabled={isBusy || confirmDisabled}
       >
-        Подтвердить
+        {t("dialog.confirm")}
       </button>
     </>
   );
