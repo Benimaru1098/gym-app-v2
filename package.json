@@ -9,9 +9,11 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "i18next": "^27.1.1",
     "motion": "^12.38.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-i18next": "^18.0.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
