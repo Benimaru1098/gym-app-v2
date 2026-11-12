@@ -15,6 +15,9 @@
     "save": "Save",
     "cancel": "Cancel"
   },
+  "home": {
+    "title": "Workouts"
+  },
   "settings": {
     "theme": "App theme",
     "lightTheme": "Light",
@@ -34,6 +37,23 @@
     "exportDescription": "saves your exercises, templates, training days and workout history to a file. Use it as a backup or to move your data to another device. Workouts in progress are excluded.",
     "importDescription": "replaces the selected data with data from the file. Workouts in progress will be removed.",
     "clearDescription": "deletes your completed workout history. Your exercises, templates, training days and workouts in progress are kept."
+  },
+  "backup": {
+    "title": "Backup",
+    "introTitle": "Keep a copy of your workouts",
+    "purpose": "Use “Import data” to restore your data after reinstalling Liftika or to transfer it to another device.",
+    "contents": "The backup includes completed workouts with weights and reps, training days, templates, and your exercise library with any changes you made.",
+    "instructions": "Choose a folder for your backup file, such as Documents or Downloads.",
+    "updates": "Liftika automatically updates this file when you make changes to your workout log, training days, templates, or exercise library.",
+    "chooseLocation": "Choose location",
+    "changeLocation": "Choose another location",
+    "later": "Later",
+    "done": "Done",
+    "lastSaved": "Last saved: {{date}} at {{time}}",
+    "chooseFailed": "Couldn’t access the selected file. Try choosing another location.",
+    "writeFailed": "Couldn’t update the backup. Try again or choose another location.",
+    "statusFailed": "Couldn’t check the backup. Restart the app or choose a backup location.",
+    "retry": "Try again"
   },
   "prep": {
     "reselectWorkout": "Go back to Home and select a workout again.",

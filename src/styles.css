@@ -135,6 +135,16 @@ noscript {
   -webkit-overflow-scrolling: touch;
 }
 
+.native-android .view {
+  --view-top-inset: max(var(--safe-area-inset-top, 0px), env(safe-area-inset-top, 0px));
+  height: calc(100% - var(--view-top-inset));
+  margin-top: var(--view-top-inset);
+}
+
+.native-android .view:has(.home-screen) {
+  container-type: size;
+}
+
 .screen {
   display: flex;
   flex-direction: column;
@@ -150,6 +160,15 @@ noscript {
 .home-screen {
   min-height: calc(100vh - 128px - env(safe-area-inset-bottom));
   min-height: calc(100svh - 128px - env(safe-area-inset-bottom));
+}
+
+.native-android .screen-motion-frame:has(> .home-screen) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.native-android .home-screen {
+  min-height: 0;
 }
 
 .home-overview-title-row {
@@ -287,6 +306,31 @@ h2 {
   --illustration-height: calc(100% + 12px);
   background: var(--surface);
   box-shadow: var(--shadow-soft);
+}
+
+.native-android .home-workout-list.is-fitted {
+  grid-template-rows: repeat(var(--home-workout-card-count), minmax(min-content, 1fr));
+  min-height: 0;
+}
+
+.native-android .home-workout-list.is-fitted .workout-card {
+  min-height: 0;
+  padding-block: clamp(4px, calc(5cqh - 20px), 16px);
+}
+
+.native-android .home-workout-list.is-fitted .workout-card-content {
+  gap: clamp(2px, calc(4cqh - 17px), 10px);
+}
+
+.native-android .home-workout-list.is-fitted .workout-last-label {
+  padding-block: clamp(2px, calc(2.5cqh - 10px), 8px);
+}
+
+@container (max-height: 510px) {
+  .native-android .home-screen:has(> .is-fitted),
+  .native-android .home-workout-list.is-fitted {
+    row-gap: 6px;
+  }
 }
 
 .workout-card-button {
@@ -586,8 +630,6 @@ h2 {
 .template-select-handle {
   display: grid;
   place-items: center;
-  justify-self: center;
-  width: 86px;
   height: 22px;
   margin: -4px 0 0;
   border: 0;
@@ -2494,6 +2536,19 @@ button.journal-card:active {
 
 .data-section {
   border-color: var(--line);
+}
+
+.backup-description p {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.backup-description strong {
+  overflow-wrap: anywhere;
+}
+
+.backup-description .backup-error {
+  color: var(--danger);
 }
 
 .danger-action {

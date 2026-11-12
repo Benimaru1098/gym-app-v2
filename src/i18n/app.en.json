@@ -110,6 +110,7 @@
     "exerciseDeleted": "Exercise deleted",
     "exerciseDeleteFailed": "Couldn't delete the exercise",
     "exportPrepared": "Export ready",
+    "exportSaved": "Export saved",
     "exportFailed": "Couldn't export your data",
     "importFileInvalid": "Couldn't read the import file. Choose a JSON file exported from the app.",
     "importSucceeded": "Data imported",

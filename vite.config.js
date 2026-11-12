@@ -8,6 +8,7 @@ const publicOfflineFiles = [
   "manifest.webmanifest",
   "assets/icons/icon-192.png",
   "assets/icons/icon-512.png",
+  "assets/icons/icon-maskable-512.png",
 ];
 const buildPlaceholder = "/* PWA_BUILD */ null";
 

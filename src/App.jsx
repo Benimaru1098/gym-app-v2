@@ -1,4 +1,4 @@
-import { animate, AnimatePresence, LayoutGroup, mix, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
+import { animate, AnimatePresence, LayoutGroup, mix, motion, useDragControls, useIsPresent, useMotionValue, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -57,7 +57,10 @@ import {
   localizeTemplateName,
 } from "./i18n/catalog.js";
 import { i18n, t } from "./i18n/index.js";
+import { gymCycleAndroid, isNativeAndroid, syncAndroidSystemBars } from "./platform/android.js";
+import { startAutomaticBackup, takeBackupSetupOffer } from "./platform/androidBackup.js";
 import { icon } from "./ui/icons.js";
+import AndroidBackupSettings from "./ui/AndroidBackupSettings.jsx";
 import LanguageSettings from "./ui/LanguageSettings.jsx";
 import ModalDialog, { ConfirmationActions } from "./ui/ModalDialog.jsx";
 import SettingsToggle, { settingsToggleTransition } from "./ui/SettingsToggle.jsx";
@@ -150,10 +153,10 @@ const bottomSheetTransition = {
 };
 
 const BOTTOM_SHEET_DRAG_CLOSE_RATIO = 0.4;
-const BOTTOM_SHEET_DRAG_LIMIT_RATIO = 0.46;
+const BOTTOM_SHEET_DRAG_START_RATIO = 0.47;
 const BOTTOM_SHEET_DRAG_UP_LIMIT = 18;
-const BOTTOM_SHEET_DRAG_MIN_LIMIT = 120;
 const BOTTOM_SHEET_DRAG_VELOCITY_CLOSE = 900;
+const BOTTOM_SHEET_DRAG_SLOP = 6;
 
 const secondaryScreenTransition = {
   duration: 0.24,
@@ -216,6 +219,7 @@ function createInitialState() {
     importDraft: null,
     isLoading: true,
     isStandalone:
+      isNativeAndroid ||
       window.matchMedia?.("(display-mode: standalone)")?.matches ||
       window.navigator.standalone === true,
     journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
@@ -230,6 +234,10 @@ function createInitialState() {
 }
 
 function normalizeHomeView(view) {
+  if (isNativeAndroid && view?.name === "backup") {
+    return { name: "backup", fromSettings: Boolean(view.fromSettings) };
+  }
+
   if (view?.name === "settings") {
     return { name: "settings", workoutGroupId: null };
   }
@@ -449,6 +457,10 @@ function getPlanBackTarget(planView) {
 }
 
 function getLocalBackTarget(appState) {
+  if (appState.activeTab === "home" && appState.homeView.name === "backup") {
+    return { activeTab: "home", homeView: { name: appState.homeView.fromSettings ? "settings" : "overview" } };
+  }
+
   if (appState.activeTab === "home" && appState.homeView.name === "exerciseHistory") {
     return { activeTab: "home", homeView: { ...appState.homeView, name: "activeWorkout" } };
   }
@@ -1058,7 +1070,7 @@ function getViewDepth(appState) {
     case "home": {
       const normalized = normalizeHomeView(appState.homeView);
 
-      if (normalized.name === "activeWorkout") {
+      if (normalized.name === "activeWorkout" || (normalized.name === "backup" && normalized.fromSettings)) {
         return 2;
       }
 
@@ -1571,11 +1583,25 @@ function App() {
   }, [navigate]);
 
   useEffect(() => {
-    refreshData().catch((error) => {
+    let mounted = true;
+    let stopBackup;
+    refreshData().then(() => {
+      if (!mounted || !isNativeAndroid) return;
+
+      stopBackup = startAutomaticBackup();
+      if (takeBackupSetupOffer()) {
+        navigate({ activeTab: "home", homeView: { name: "backup" } });
+      }
+    }).catch((error) => {
+      if (!mounted) return;
       console.error(error);
       patchState({ error: t("notice.loadFailed"), isLoading: false });
     });
-  }, [patchState, refreshData]);
+    return () => {
+      mounted = false;
+      stopBackup?.();
+    };
+  }, [navigate, patchState, refreshData]);
 
   useEffect(() => {
     writeHistoryState("replace");
@@ -1637,6 +1663,8 @@ function App() {
   }, [pushOverlayHistory, restoreScrollPosition, saveCurrentScrollPosition, writeHistoryState]);
 
   useEffect(() => {
+    if (isNativeAndroid) return;
+
     const handleBeforeInstallPrompt = (event) => {
       event.preventDefault();
       deferredInstallPromptRef.current = event;
@@ -1657,7 +1685,7 @@ function App() {
   }, [patchState]);
 
   useEffect(() => {
-    if (!("serviceWorker" in navigator)) {
+    if (isNativeAndroid || !("serviceWorker" in navigator)) {
       return;
     }
 
@@ -1822,6 +1850,10 @@ function App() {
 
   const openSettings = useCallback(() => {
     navigate({ activeTab: "home", homeView: { name: "settings" } });
+  }, [navigate]);
+
+  const openBackup = useCallback(() => {
+    navigate({ activeTab: "home", homeView: { name: "backup", fromSettings: true } });
   }, [navigate]);
 
   const openTrainingDayCreate = useCallback(() => {
@@ -3009,13 +3041,20 @@ function App() {
     }
 
     try {
-      const snapshot = await exportAppData();
-      const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+      const content = JSON.stringify(await exportAppData(), null, 2);
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const fileName = `gym-app-data-${dateStamp}.json`;
+      if (isNativeAndroid) {
+        const { saved } = await gymCycleAndroid.saveExport({ fileName, content });
+        if (saved) showNotice(t("notice.exportSaved"));
+        return;
+      }
+
+      const blob = new Blob([content], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      const dateStamp = new Date().toISOString().slice(0, 10);
       link.href = url;
-      link.download = `gym-app-data-${dateStamp}.json`;
+      link.download = fileName;
       link.click();
       URL.revokeObjectURL(url);
       showNotice(t("notice.exportPrepared"));
@@ -3257,6 +3296,15 @@ function App() {
             onShowMore={showMoreExerciseHistory}
           />
         );
+      } else if (state.activeTab === "home" && currentView?.name === "backup") {
+        screenContent = (
+          <section className="screen plan-screen backup-screen">
+            <header className="screen-header">
+              <ScreenTitle onBack={currentView.fromSettings ? goBack : undefined}>{t("screens:backup.title")}</ScreenTitle>
+            </header>
+            <AndroidBackupSettings fromSettings={currentView.fromSettings} onBack={goBack} />
+          </section>
+        );
       } else if (state.activeTab === "home") {
         screenContent = (
           <HomeView
@@ -3275,6 +3323,7 @@ function App() {
             onOpenExerciseHistory={openExerciseHistory}
             onOpenExerciseTechnique={openExerciseTechnique}
             onOpenSettings={openSettings}
+            onOpenBackup={openBackup}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
             onOpenWorkoutPreparation={openWorkoutPreparation}
             onOpenTemplateSelector={openTemplateSelector}
@@ -3416,6 +3465,7 @@ function App() {
     openExerciseTechniqueEditor,
     openFreeWorkoutPreparation,
     openSettings,
+    openBackup,
     openJournalFilter,
     openJournalWorkout,
     openTemplateCreate,
@@ -3671,6 +3721,7 @@ function HomeView({
   onOpenExerciseHistory,
   onOpenExerciseTechnique,
   onOpenSettings,
+  onOpenBackup,
   onOpenFreeWorkoutPreparation,
   onOpenWorkoutPreparation,
   onOpenTemplateSelector,
@@ -3698,6 +3749,7 @@ function HomeView({
         onExportData={onExportData}
         onImportData={onImportData}
         onInstall={onInstall}
+        onOpenBackup={onOpenBackup}
       />
     );
   }
@@ -3768,7 +3820,7 @@ function HomeView({
     <section className="screen home-screen">
       <header className="screen-header">
         <div className="home-overview-title-row">
-          <h1>{t("nav.home", { ns: "app" })}</h1>
+          <h1>{t("home.title")}</h1>
           <button
             className="home-settings-button"
             type="button"
@@ -3847,6 +3899,7 @@ function ThemeSettings() {
     const previousPalette = shouldReduceMotion ? null : readThemePalette(root);
     stopThemeTransitionRef.current?.();
     root.dataset.theme = nextTheme;
+    syncAndroidSystemBars(nextTheme);
 
     if (previousPalette) {
       const mixPalette = mix(previousPalette, readThemePalette(root));
@@ -3893,7 +3946,7 @@ function ThemeSettings() {
   );
 }
 
-function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall }) {
+function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
   const { t } = useTranslation("screens");
   return (
     <section className="screen plan-screen settings-screen">
@@ -3921,6 +3974,11 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
           </InfoNotice>
         </div>
         <div className="action-grid">
+          {isNativeAndroid ? (
+            <button className="action-button" type="button" onClick={onOpenBackup}>
+              <span>{t("backup.title")}</span>
+            </button>
+          ) : null}
           <button className="action-button" type="button" onClick={onExportData}>
             <SvgIcon name="download" />
             <span>{t("settings.export")}</span>
@@ -6321,59 +6379,145 @@ function JournalWorkoutDetails({ data, workoutLogId, onBack, onDelete, onSave })
   );
 }
 
+function shouldCloseBottomSheet(height, offset, velocity) {
+  return offset >= height * BOTTOM_SHEET_DRAG_CLOSE_RATIO ||
+    (velocity >= BOTTOM_SHEET_DRAG_VELOCITY_CLOSE && offset > 32);
+}
+
 function BottomSheet({ ariaLabel, backdropLabel, className = "", onClose, children }) {
   const shouldReduceMotion = useReducedMotion();
+  const isPresent = useIsPresent();
   const dragControls = useDragControls();
+  const dragOffset = useMotionValue(0);
   const sheetRef = useRef(null);
-  const [dragLimit, setDragLimit] = useState(BOTTOM_SHEET_DRAG_MIN_LIMIT);
+  const [sheetHeight, setSheetHeight] = useState(0);
 
-  const updateDragLimit = useCallback(() => {
-    const sheetHeight = sheetRef.current?.getBoundingClientRect().height ?? 0;
-    if (!sheetHeight) {
-      return;
-    }
-
-    setDragLimit(
-      Math.max(
-        BOTTOM_SHEET_DRAG_MIN_LIMIT,
-        Math.round(sheetHeight * BOTTOM_SHEET_DRAG_LIMIT_RATIO),
-      ),
-    );
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    const updateHeight = () => setSheetHeight(sheet.offsetHeight);
+    updateHeight();
+    window.addEventListener("resize", updateHeight);
+    return () => window.removeEventListener("resize", updateHeight);
   }, []);
 
   useEffect(() => {
-    updateDragLimit();
-    window.addEventListener("resize", updateDragLimit);
+    if (!isPresent) return;
 
+    const sheet = sheetRef.current;
+    let gesture = null;
+
+    function snapBack() {
+      if (shouldReduceMotion) dragOffset.set(0);
+      else animate(dragOffset, 0, bottomSheetTransition);
+    }
+
+    function cancelTouch() {
+      if (gesture?.dragging) snapBack();
+      gesture = null;
+    }
+
+    function startTouch(event) {
+      if (event.touches.length !== 1) {
+        cancelTouch();
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Element) || target.closest("input, textarea, select, [contenteditable='true']")) return;
+
+      const touch = event.touches[0];
+      const { top, height } = sheet.getBoundingClientRect();
+      const visibleHeight = sheet.parentElement.getBoundingClientRect().bottom - top;
+      const scroll = target.closest("[data-sheet-scroll]");
+      if (touch.clientY - top > visibleHeight * BOTTOM_SHEET_DRAG_START_RATIO || scroll?.scrollTop > 1) return;
+
+      gesture = {
+        id: touch.identifier,
+        x: touch.clientX,
+        y: touch.clientY,
+        height,
+        scroll,
+        lastY: touch.clientY,
+        lastTime: event.timeStamp,
+        velocity: 0,
+        dragging: false,
+      };
+    }
+
+    function moveTouch(event) {
+      if (!gesture) return;
+      const touch = event.touches[0];
+      if (event.touches.length !== 1 || touch.identifier !== gesture.id || !event.cancelable) {
+        cancelTouch();
+        return;
+      }
+
+      const offset = touch.clientY - gesture.y;
+      if (!gesture.dragging) {
+        const sideways = Math.abs(touch.clientX - gesture.x);
+        if (Math.max(Math.abs(offset), sideways) < BOTTOM_SHEET_DRAG_SLOP) return;
+        if (offset <= sideways || gesture.scroll?.scrollTop > 1) {
+          gesture = null;
+          return;
+        }
+
+        dragOffset.stop();
+        const position = dragOffset.get();
+        gesture.origin = typeof position === "string" && position.endsWith("%")
+          ? Number.parseFloat(position) * gesture.height / 100
+          : Number.parseFloat(position) || 0;
+        gesture.dragging = true;
+      }
+
+      event.preventDefault();
+      const elapsed = event.timeStamp - gesture.lastTime;
+      if (elapsed > 0) gesture.velocity = (touch.clientY - gesture.lastY) * 1000 / elapsed;
+      gesture.lastY = touch.clientY;
+      gesture.lastTime = event.timeStamp;
+      dragOffset.set(Math.min(gesture.height, Math.max(-BOTTOM_SHEET_DRAG_UP_LIMIT, gesture.origin + offset)));
+    }
+
+    function endTouch(event) {
+      const touch = event.changedTouches[0];
+      if (!gesture || touch?.identifier !== gesture.id) return;
+      const finished = gesture;
+      gesture = null;
+      if (!finished.dragging) return;
+
+      const velocity = event.timeStamp - finished.lastTime < 100 ? finished.velocity : 0;
+      if (shouldCloseBottomSheet(finished.height, touch.clientY - finished.y, velocity)) onClose();
+      else snapBack();
+    }
+
+    sheet.addEventListener("touchstart", startTouch, { passive: true });
+    sheet.addEventListener("touchmove", moveTouch, { passive: false });
+    sheet.addEventListener("touchend", endTouch, { passive: true });
+    sheet.addEventListener("touchcancel", cancelTouch, { passive: true });
     return () => {
-      window.removeEventListener("resize", updateDragLimit);
+      sheet.removeEventListener("touchstart", startTouch);
+      sheet.removeEventListener("touchmove", moveTouch);
+      sheet.removeEventListener("touchend", endTouch);
+      sheet.removeEventListener("touchcancel", cancelTouch);
     };
-  }, [updateDragLimit]);
+  }, [dragOffset, isPresent, onClose, shouldReduceMotion]);
 
   const handleDragStart = useCallback(
     (event) => {
-      if (event.pointerType === "mouse" && event.button !== 0) {
+      if (!isPresent || event.pointerType === "touch" || (event.pointerType === "mouse" && event.button !== 0)) {
         return;
       }
 
       dragControls.start(event);
     },
-    [dragControls],
+    [dragControls, isPresent],
   );
 
   const handleDragEnd = useCallback(
     (_, info) => {
-      const sheetHeight = sheetRef.current?.getBoundingClientRect().height ?? dragLimit;
-      const closeDistance = sheetHeight * BOTTOM_SHEET_DRAG_CLOSE_RATIO;
-      const shouldClose =
-        info.offset.y >= closeDistance ||
-        (info.velocity.y >= BOTTOM_SHEET_DRAG_VELOCITY_CLOSE && info.offset.y > 32);
-
-      if (shouldClose) {
+      if (shouldCloseBottomSheet(sheetHeight, info.offset.y, info.velocity.y)) {
         onClose();
       }
     },
-    [dragLimit, onClose],
+    [onClose, sheetHeight],
   );
 
   return (
@@ -6394,13 +6538,14 @@ function BottomSheet({ ariaLabel, backdropLabel, className = "", onClose, childr
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}
+        style={{ y: dragOffset }}
         initial={shouldReduceMotion ? false : { y: "100%" }}
         animate={{ y: 0 }}
         exit={shouldReduceMotion ? undefined : { y: "100%" }}
         transition={shouldReduceMotion ? { duration: 0 } : bottomSheetTransition}
         drag="y"
         dragControls={dragControls}
-        dragConstraints={{ top: -BOTTOM_SHEET_DRAG_UP_LIMIT, bottom: dragLimit }}
+        dragConstraints={{ top: -BOTTOM_SHEET_DRAG_UP_LIMIT, bottom: sheetHeight }}
         dragElastic={0.02}
         dragListener={false}
         dragMomentum={false}
@@ -6508,7 +6653,7 @@ function ExerciseTechniqueSheet({ viewer, onClose }) {
       onClose={onClose}
     >
       <div className="exercise-technique-content">
-        <div className="exercise-technique-body">
+        <div className="exercise-technique-body" data-sheet-scroll>
           <div className="exercise-technique-header">
             <h2>{viewer.name}</h2>
           </div>
@@ -6602,7 +6747,7 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
       onClose={onClose}
     >
       <SearchField value={searchQuery} onChange={setSearchQuery} placeholder={t("templates.search")} />
-      <div className="template-select-list">
+      <div className="template-select-list" data-sheet-scroll>
         {filteredTemplates.length ? (
           filteredTemplates.map((template) => (
             <button
@@ -6681,7 +6826,7 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
       onClose={onClose}
     >
       <SearchField value={searchQuery} onChange={setSearchQuery} placeholder={t("builder.searchExercises")} />
-      <div className="template-select-list">
+      <div className="template-select-list" data-sheet-scroll>
         {filteredExercises.length ? (
           filteredExercises.map((exercise) => {
             const isDisabled = exercise.isCurrent || exercise.isUsedInWorkout;

@@ -9,9 +9,12 @@ import { APP_LANGUAGES } from "../i18n/index.js";
 import { SCHEMA_VERSION, createInitialData, initialData } from "./seed.js";
 import techniqueCatalog from "./exercise-techniques.json" with { type: "json" };
 import legacyTechniqueFingerprints from "./legacy-technique-fingerprints.json" with { type: "json" };
+import { isNativeAndroid } from "../platform/android.js";
 
 const DB_NAME = "gym-cycle-db";
 const DB_VERSION = 3;
+const BACKUP_REVISION_ID = "backup-revision";
+export const BACKUP_DATA_CHANGED = "gym-cycle-backup-data-changed";
 const DEFAULT_TECHNIQUE_BY_ID = new Map(
   Object.entries(techniqueCatalog).map(([id, steps]) => [id, steps.join("\n")]),
 );
@@ -49,6 +52,27 @@ function transactionDone(transaction) {
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error);
   });
+}
+
+function markBackupChange(transaction) {
+  if (!isNativeAndroid) return;
+
+  transaction.objectStore("metadata").put({ id: BACKUP_REVISION_ID, revision: crypto.randomUUID() });
+  transaction.addEventListener("complete", () => window.dispatchEvent(new Event(BACKUP_DATA_CHANGED)), { once: true });
+}
+
+export async function readBackupRevision() {
+  const database = await openAppDatabase();
+  try {
+    const transaction = database.transaction("metadata", "readonly");
+    const [record] = await Promise.all([
+      requestToPromise(transaction.objectStore("metadata").get(BACKUP_REVISION_ID)),
+      transactionDone(transaction),
+    ]);
+    return record?.revision ?? "initial";
+  } finally {
+    database.close();
+  }
 }
 
 function createStores(database) {
@@ -240,6 +264,7 @@ async function ensureSystemTemplates(database) {
       createdAt: metadata?.createdAt ?? now,
       updatedAt: now,
     });
+    markBackupChange(transaction);
   });
 
   await Promise.all([updateTemplates, done]);
@@ -272,6 +297,7 @@ async function seedDatabase(database) {
     transaction.objectStore("workoutGroups").put(workoutGroup);
   }
 
+  markBackupChange(transaction);
   await done;
   return data;
 }
@@ -294,12 +320,19 @@ async function ensureSeedData(database) {
   await ensureSystemTemplates(database);
 }
 
-export async function loadAppData() {
+export async function loadAppData({ includeActiveSessions = true } = {}) {
   const database = await openAppDatabase();
 
   try {
     await ensureSeedData(database);
 
+    const storeNames = includeActiveSessions ? STORE_NAMES : STORE_NAMES.filter((name) => name !== "activeWorkoutSessions");
+    const transaction = database.transaction(storeNames, "readonly");
+    const done = transactionDone(transaction);
+    const [records] = await Promise.all([
+      Promise.all(storeNames.map((name) => requestToPromise(transaction.objectStore(name).getAll()))),
+      done,
+    ]);
     const [
       metadataItems,
       muscleGroups,
@@ -307,16 +340,8 @@ export async function loadAppData() {
       exerciseTemplates,
       workoutGroups,
       workoutLogs,
-      activeWorkoutSessions,
-    ] = await Promise.all([
-      readStore(database, "metadata"),
-      readStore(database, "muscleGroups"),
-      readStore(database, "exercises"),
-      readStore(database, "exerciseTemplates"),
-      readStore(database, "workoutGroups"),
-      readStore(database, "workoutLogs"),
-      readStore(database, "activeWorkoutSessions"),
-    ]);
+      activeWorkoutSessions = [],
+    ] = records;
 
     return {
       metadata: metadataItems.find((item) => item.id === "app") ?? null,
@@ -337,7 +362,7 @@ export async function loadAppData() {
 }
 
 export async function exportAppData() {
-  const data = await loadAppData();
+  const data = await loadAppData({ includeActiveSessions: false });
 
   return {
     app: EXPORT_APP_ID,
@@ -618,6 +643,7 @@ export async function importAppData(payload, { selectedStores = IMPORT_STORE_NAM
         updatedAt: now,
         importedAt: now,
       });
+      markBackupChange(transaction);
       await done;
     } catch (error) {
       // A request error may already have aborted the transaction.
@@ -672,6 +698,7 @@ export async function saveWorkoutGroup(workoutGroup, { deleteActiveSessions = fa
       updatedAt: now,
     });
 
+    markBackupChange(transaction);
     await done;
     return normalizedWorkoutGroup;
   } finally {
@@ -721,6 +748,7 @@ export async function deleteWorkoutGroup(workoutGroupId) {
       updatedAt: now,
     });
 
+    markBackupChange(transaction);
     await done;
     return { status: "deleted", deletedActiveSessionCount: sessionsToDelete.length };
   } finally {
@@ -765,6 +793,7 @@ export async function saveExerciseTemplate(template) {
         createdAt: metadata?.createdAt ?? now,
         updatedAt: now,
       });
+      markBackupChange(transaction);
       return { status: "saved" };
     });
 
@@ -797,6 +826,7 @@ export async function saveExercise(exercise, { updateOnly = false } = {}) {
       updatedAt: new Date().toISOString(),
     });
 
+    markBackupChange(transaction);
     await done;
     return { status: "saved" };
   } finally {
@@ -844,6 +874,7 @@ export async function saveWorkoutGroupSelectedTemplate(workoutGroupId, muscleGro
       updatedAt: new Date().toISOString(),
     });
 
+    markBackupChange(transaction);
     await done;
 
     return { status: "updated" };
@@ -912,6 +943,7 @@ export async function deleteExercise(exerciseId) {
       updatedAt: new Date().toISOString(),
     });
 
+    markBackupChange(transaction);
     await done;
 
     return {
@@ -1000,6 +1032,7 @@ export async function deleteExerciseTemplate(templateId) {
       updatedAt: new Date().toISOString(),
     });
 
+    markBackupChange(transaction);
     await done;
 
     return { status: shouldArchive ? "archived" : "deleted" };
@@ -1101,7 +1134,7 @@ export async function saveWorkoutLogSets(originalLog, changes) {
   const database = await openAppDatabase();
 
   try {
-    const transaction = database.transaction("workoutLogs", "readwrite");
+    const transaction = database.transaction(isNativeAndroid ? ["workoutLogs", "metadata"] : "workoutLogs", "readwrite");
     const done = transactionDone(transaction);
     const store = transaction.objectStore("workoutLogs");
     const [result] = await Promise.all([
@@ -1119,6 +1152,7 @@ export async function saveWorkoutLogSets(originalLog, changes) {
         }
 
         store.put(currentLog);
+        markBackupChange(transaction);
         return { status: "saved", workoutLog: currentLog };
       }),
       done,
@@ -1325,6 +1359,7 @@ export async function finishActiveWorkoutSession(session) {
       updatedAt: completedAt,
     });
 
+    markBackupChange(transaction);
     await done;
     return workoutLog;
   } finally {
@@ -1384,6 +1419,7 @@ export async function deleteWorkoutLog(workoutLogId) {
       updatedAt: now,
     });
 
+    markBackupChange(transaction);
     await done;
 
     return {
@@ -1438,6 +1474,7 @@ export async function clearWorkoutLogs() {
       updatedAt: new Date().toISOString(),
     });
 
+    markBackupChange(transaction);
     await done;
   } finally {
     database.close();
