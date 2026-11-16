@@ -13,6 +13,7 @@
         --muted: #59516b;
         --link: #5235ad;
         --border: #dcd4eb;
+        background: var(--background);
       }
 
       @media (prefers-color-scheme: dark) {
@@ -29,7 +30,6 @@
         max-width: 68ch;
         margin: 0 auto;
         padding: 1.5rem 1.25rem 3rem;
-        background: var(--background);
         color: var(--text);
         font: 1rem/1.6 system-ui, sans-serif;
         overflow-wrap: anywhere;
@@ -72,6 +72,10 @@
         margin-top: .5rem;
       }
 
+      .services p {
+        margin: .35rem 0 .75rem;
+      }
+
       a {
         color: var(--link);
         text-underline-offset: .15em;
@@ -100,10 +104,11 @@
       <article id="ru" aria-labelledby="title-ru">
         <h1 id="title-ru">Политика конфиденциальности Gymbe</h1>
         <p class="date">Обновлено <time datetime="2026-11-16">16 ноября 2026 года</time>.</p>
-        <p>Эта политика относится к приложению Gymbe для Android и его веб-версии. По вопросам конфиденциальности можно написать разработчику Gymbe на <a href="mailto:aidik1098@gmail.com">aidik1098@gmail.com</a>.</p>
+        <p>Эта политика относится к приложению Gymbe для Android (<code>com.gymbe.app</code>) и его веб-версии. По вопросам конфиденциальности можно написать разработчику Gymbe на <a href="mailto:aidik1098@gmail.com">aidik1098@gmail.com</a>.</p>
 
         <h2>Данные тренировок и настройки</h2>
-        <p>Gymbe хранит на вашем устройстве записи о завершённых и незавершённых тренировках, включая даты, упражнения, подходы, вес и повторы, а также созданные или изменённые вами планы, тренировочные дни, шаблоны, названия и описания упражнений и ссылки на медиа. Приложение использует эти данные, чтобы вести журнал, продолжать незавершённые тренировки и давать рекомендации по нагрузке на основе истории. Язык, тема и единицы веса также сохраняются на устройстве.</p>
+        <p>Gymbe сохраняет записи о физической активности на устройстве. В журнале и незавершённых тренировках хранятся даты, упражнения, подходы, вес снарядов и число повторений. Вы сами вводите эти данные или восстанавливаете их из файла. Gymbe не получает записи о тренировках из Health Connect, датчиков или фитнес-сервисов.</p>
+        <p>Приложение использует записи, чтобы вести журнал, продолжать незавершённые тренировки и давать рекомендации по нагрузке. На устройстве также хранятся ваши планы и тренировочные дни, шаблоны, названия и описания упражнений, ссылки на медиа, язык, тема и единица веса.</p>
         <p>Для работы Gymbe не нужен аккаунт. Разработчик не получает ваш журнал, планы, упражнения или настройки на свой сервер, не продаёт эти данные и не использует их для рекламы. В Gymbe нет встроенной аналитики использования приложения.</p>
 
         <h2>Импорт, экспорт и резервные копии</h2>
@@ -111,8 +116,12 @@
         <p>На Android вы можете настроить обновление резервной копии. Gymbe сохраняет сведения о выбранном файле и времени последнего сохранения на устройстве. Android предоставляет доступ к этому файлу через системный выбор документов. Если вы выберете облачное хранилище или отправите файл другому человеку, доступ к копии будет зависеть от выбранного сервиса или получателя. Разработчику Gymbe эти файлы автоматически не отправляются.</p>
 
         <h2>Видео, внешние изображения и веб-хостинг</h2>
-        <ul>
-          <li><strong>YouTube.</strong> Если в открытой технике упражнения или предпросмотре есть видео YouTube, Gymbe загружает встроенный плеер в режиме повышенной конфиденциальности. Уже при загрузке плеера Google может получить IP-адрес, сведения о браузере или устройстве и идентификатор видео, чтобы показать плеер и проверить доступность ролика. При воспроизведении Google также может обрабатывать сведения о просмотре. На поддерживаемых устройствах Android проверка подлинности встроенного плеера может передать Google идентификатор пакета, версию приложения, сертификат подписи и токен проверки устройства. Журнал тренировок и содержимое резервных копий не передаются в плеер. Подробнее в <a href="https://policies.google.com/privacy?hl=ru">политике конфиденциальности Google</a> и <a href="https://www.youtube.com/t/terms">условиях YouTube</a>.</li>
+        <ul class="services">
+          <li>
+            <strong>YouTube</strong>
+            <p>Когда вы открываете технику или предпросмотр с видео YouTube, Gymbe загружает плеер в режиме повышенной конфиденциальности. Ещё до начала просмотра Google может получить IP-адрес, сведения о браузере или устройстве и идентификатор видео для загрузки плеера и проверки доступности ролика. При воспроизведении Google также может обрабатывать сведения о просмотре.</p>
+            <p>На поддерживаемых устройствах Android при проверке подлинности приложения и устройства YouTube может получить идентификатор пакета, версию приложения, сертификат подписи и токен проверки устройства. Gymbe не передаёт YouTube журнал тренировок или содержимое резервных копий. Подробнее в <a href="https://policies.google.com/privacy?hl=ru">политике конфиденциальности Google</a> и <a href="https://www.youtube.com/t/terms">условиях YouTube</a>.</p>
+          </li>
           <li><strong>Изображения по внешним ссылкам.</strong> При загрузке изображения или GIF по ссылке его поставщик получает запрос с вашего устройства и может обработать IP-адрес и другие технические сведения запроса, чтобы вернуть файл. Их обработка зависит от правил этого поставщика.</li>
           <li><strong>Vercel.</strong> Vercel размещает веб-версию Gymbe и эту политику. Когда вы открываете сайт или страницу политики, хостинг может обрабатывать IP-адрес и технические данные запроса для доставки страницы и безопасности сервиса. Журнал и настройки веб-версии хранятся в вашем браузере. Подробнее в <a href="https://vercel.com/legal/privacy-notice">политике конфиденциальности Vercel</a>.</li>
         </ul>
@@ -122,7 +131,7 @@
 
         <h2>Защита, хранение и удаление</h2>
         <ul>
-          <li>Данные Gymbe хранятся в изолированном хранилище приложения или сайта и остаются там, пока вы их не удалите. Соединения со встроенным YouTube и страницей политики используют HTTPS.</li>
+          <li>Данные Gymbe хранятся в изолированном хранилище приложения или сайта, пока эти данные не удалите вы или их не очистит система либо браузер. Соединения со встроенным YouTube и страницей политики используют HTTPS. Защита соединения при загрузке изображения или GIF по внешней ссылке зависит от адреса и сервера, на котором находится файл.</li>
           <li>Отдельные записи можно удалить в журнале. Чтобы удалить историю завершённых тренировок, выберите <strong>Настройки → Очистить тренировки</strong>. Чтобы удалить все локальные данные, очистите данные Gymbe в настройках Android, удалите приложение либо очистите данные сайта в браузере для веб-версии.</li>
           <li>Экспорт и резервные копии — обычные JSON-файлы, которые Gymbe не шифрует. Храните их в доступном только вам месте. Сохранённые файлы нужно удалять отдельно в выбранной папке или облачном хранилище: удаление Gymbe не удаляет эти копии.</li>
         </ul>
@@ -133,10 +142,11 @@
         <a href="#ru" hreflang="ru" lang="ru">Русская версия</a>
         <h2 id="title-en">Gymbe Privacy Policy</h2>
         <p class="date">Last updated <time datetime="2026-11-16">November 16, 2026</time>.</p>
-        <p>This policy applies to the Gymbe Android app and its web version. You can contact the Gymbe developer about privacy at <a href="mailto:aidik1098@gmail.com">aidik1098@gmail.com</a>.</p>
+        <p>This policy applies to the Gymbe Android app (<code>com.gymbe.app</code>) and its web version. You can contact the Gymbe developer about privacy at <a href="mailto:aidik1098@gmail.com">aidik1098@gmail.com</a>.</p>
 
         <h3>Workout data and preferences</h3>
-        <p>Gymbe stores your completed workouts and workouts in progress on your device, including dates, exercises, sets, weights, and reps. It also stores the plans, training days, templates, exercise names and descriptions, and media links you add or change. Gymbe uses these records to keep your workout log, resume workouts, and suggest training loads based on your history. Your language, theme, and weight unit preferences are stored on your device as well.</p>
+        <p>Gymbe stores physical activity records on your device. Completed workouts and workouts in progress include dates, exercises, sets, weights lifted, and reps. You enter these records yourself or restore them from a file. Gymbe does not receive workout records from Health Connect, sensors, or fitness services.</p>
+        <p>Gymbe uses these records to keep your workout log, resume workouts, and suggest training loads based on your history. Your plans and training days, templates, exercise names and descriptions, media links, language, theme, and weight unit preferences are also stored on your device.</p>
         <p>You can use Gymbe without an account. The developer does not receive your workout log, plans, exercises, or preferences on a server and does not sell or use these records for advertising. Gymbe does not include app usage analytics.</p>
 
         <h3>Imports, exports, and backups</h3>
@@ -144,8 +154,12 @@
         <p>On Android, you can set up automatic updates to a backup file. Gymbe keeps the selected file reference and the time of the last save on your device. Android provides access to that file through its document picker. If you choose cloud storage or share the file with someone, access to that copy depends on the service or recipient you chose. Gymbe does not automatically send these files to the developer.</p>
 
         <h3>Videos, external images, and web hosting</h3>
-        <ul>
-          <li><strong>YouTube.</strong> If an exercise guide or media preview you open contains a YouTube video, Gymbe loads the embedded player in privacy-enhanced mode. When the player loads, Google may receive your IP address, browser or device information, and the video identifier to display the player and check whether the video is available. Google may also process viewing activity when you play the video. On supported Android devices, the embedded player may send Google the package identifier, app version, signing certificate, and a device attestation token to verify its authenticity. Gymbe does not send your workout log or backup contents to the player. See the <a href="https://policies.google.com/privacy?hl=en">Google Privacy Policy</a> and the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>.</li>
+        <ul class="services">
+          <li>
+            <strong>YouTube</strong>
+            <p>When you open an exercise guide or media preview with a YouTube video, Gymbe loads the embedded player in privacy-enhanced mode. Before playback begins, Google may receive your IP address, browser or device information, and the video identifier to load the player and check whether the video is available. Google may also process viewing activity when you play the video.</p>
+            <p>On supported Android devices, YouTube may receive the package identifier, app version, signing certificate, and a device attestation token to verify the integrity of the app and device. Gymbe does not send your workout log or backup contents to YouTube. See the <a href="https://policies.google.com/privacy?hl=en">Google Privacy Policy</a> and the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>.</p>
+          </li>
           <li><strong>Images from external links.</strong> When Gymbe loads a linked image or GIF, the host receives a request from your device and may process your IP address and other technical request details to return the file. The host handles that information under its own policies.</li>
           <li><strong>Vercel.</strong> Vercel hosts the web version of Gymbe and this policy. When you visit the website or open the policy, the hosting provider may process your IP address and technical request data to deliver the page and help keep the service secure. Your web workout log and preferences are stored in your browser. See the <a href="https://vercel.com/legal/privacy-notice">Vercel Privacy Notice</a>.</li>
         </ul>
@@ -155,7 +169,7 @@
 
         <h3>Security, retention, and deletion</h3>
         <ul>
-          <li>Gymbe keeps data in storage isolated to the app or website. The data remains there until you delete it. Connections to the embedded YouTube player and this policy page use HTTPS.</li>
+          <li>Gymbe keeps data in storage isolated to the app or website. The data remains there until you delete it or the operating system or browser clears it. Connections to the embedded YouTube player and this policy page use HTTPS. Connection security for an external image or GIF depends on the file’s URL and host.</li>
           <li>You can delete individual entries from the workout log. To delete your completed workout history, select <strong>Settings → Clear workout history</strong>. To remove all local data, clear Gymbe’s app data in Android settings, uninstall Gymbe, or clear site data in your browser if you use the web version.</li>
           <li>Gymbe does not encrypt exported JSON files or backups. Keep them somewhere only you can access. Delete saved files separately from the chosen folder or cloud storage. Uninstalling Gymbe does not remove those copies.</li>
         </ul>
