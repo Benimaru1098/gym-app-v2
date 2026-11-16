@@ -94,6 +94,7 @@ const SINGLE_MUSCLE_ILLUSTRATION_KEYS = {
 };
 const workoutImagePreloadCache = new Map();
 const HISTORY_TAG = "gym-app-react";
+const PRIVACY_POLICY_URL = "https://gym-app-v2-flax.vercel.app/privacy.html";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
 const TEMPLATE_DRAG_MAX_SCROLL_STEP = 18;
 const TEMPLATE_DRAG_REORDER_ANIMATION_MS = 150;
@@ -3043,7 +3044,7 @@ function App() {
     try {
       const content = JSON.stringify(await exportAppData(), null, 2);
       const dateStamp = new Date().toISOString().slice(0, 10);
-      const fileName = `gym-app-data-${dateStamp}.json`;
+      const fileName = `gymbe-data-${dateStamp}.json`;
       if (isNativeAndroid) {
         const { saved } = await gymCycleAndroid.saveExport({ fileName, content });
         if (saved) showNotice(t("notice.exportSaved"));
@@ -3947,7 +3948,9 @@ function ThemeSettings() {
 }
 
 function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
-  const { t } = useTranslation("screens");
+  const { t, i18n } = useTranslation("screens");
+  const privacyPolicyUrl = i18n.resolvedLanguage === "en" ? `${PRIVACY_POLICY_URL}#en` : PRIVACY_POLICY_URL;
+
   return (
     <section className="screen plan-screen settings-screen">
       <header className="screen-header">
@@ -4002,6 +4005,14 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
           <strong>{t("settings.version")}</strong>
           <span>1.0</span>
         </div>
+        <a
+          className="action-button settings-contact-button"
+          href={privacyPolicyUrl}
+          target={isNativeAndroid ? undefined : "_blank"}
+          rel="noopener noreferrer"
+        >
+          <span>{t("settings.privacyPolicy")}</span>
+        </a>
         <a
           className="action-button settings-contact-button"
           href="https://t.me/ai_profix"
