@@ -15,6 +15,8 @@ import { scheduleTourOffer } from "../platform/tourOffer.js";
 const DB_NAME = "gym-cycle-db";
 const DB_VERSION = 3;
 const BACKUP_REVISION_ID = "backup-revision";
+const PLAY_REVIEW_PROGRESS_ID = "play-review-progress";
+const PLAY_REVIEW_MILESTONES = [3, 10, 20];
 export const BACKUP_DATA_CHANGED = "gym-cycle-backup-data-changed";
 const DEFAULT_TECHNIQUE_BY_ID = new Map(
   Object.entries(techniqueCatalog).map(([id, steps]) => [id, steps.join("\n")]),
@@ -1311,10 +1313,6 @@ export async function finishActiveWorkoutSession(session) {
   const database = await openAppDatabase();
 
   try {
-    const metadata = await readMetadata(database);
-    const exercises = await readStore(database, "exercises");
-    const templates = await readStore(database, "exerciseTemplates");
-    const activeWorkoutSessions = await readStore(database, "activeWorkoutSessions");
     const completedAt = new Date().toISOString();
     const workoutLog = createWorkoutLogFromSession(session, completedAt);
     const usedExerciseIds = new Set((session.exerciseLogs ?? []).map((log) => log.exerciseId).filter(Boolean));
@@ -1327,43 +1325,70 @@ export async function finishActiveWorkoutSession(session) {
     const exerciseStore = transaction.objectStore("exercises");
     const templateStore = transaction.objectStore("exerciseTemplates");
     const activeSessionStore = transaction.objectStore("activeWorkoutSessions");
+    const metadataStore = transaction.objectStore("metadata");
+    const workoutLogStore = transaction.objectStore("workoutLogs");
 
-    transaction.objectStore("workoutLogs").put(workoutLog);
+    const save = Promise.all([
+      requestToPromise(workoutLogStore.getKey(workoutLog.id)),
+      requestToPromise(activeSessionStore.getAll()),
+      requestToPromise(metadataStore.get("app")),
+      isNativeAndroid ? requestToPromise(metadataStore.get(PLAY_REVIEW_PROGRESS_ID)) : null,
+      Promise.all([...usedExerciseIds].map((id) => requestToPromise(exerciseStore.get(id)))),
+      Promise.all([...usedTemplateIds].map((id) => requestToPromise(templateStore.get(id)))),
+    ]).then(([existingLogKey, activeWorkoutSessions, metadata, reviewProgress, exercises, templates]) => {
+      if (existingLogKey !== undefined) return { status: "already-finished" };
+      if (!activeWorkoutSessions.some((item) => item.id === session.id)) return { status: "missing" };
 
-    for (const activeSession of activeWorkoutSessions) {
-      if (activeSession.workoutGroupId === session.workoutGroupId) {
-        activeSessionStore.delete(activeSession.id);
+      workoutLogStore.add(workoutLog);
+
+      for (const activeSession of activeWorkoutSessions) {
+        if (activeSession.workoutGroupId === session.workoutGroupId) {
+          activeSessionStore.delete(activeSession.id);
+        }
       }
-    }
 
-    for (const exercise of exercises) {
-      if (usedExerciseIds.has(exercise.id)) {
+      for (const exercise of exercises.filter(Boolean)) {
         exerciseStore.put({
           ...exercise,
           usageCount: Number(exercise.usageCount ?? 0) + 1,
         });
       }
-    }
 
-    for (const template of templates) {
-      if (usedTemplateIds.has(template.id)) {
+      for (const template of templates.filter(Boolean)) {
         templateStore.put({
           ...template,
           usageCount: Number(template.usageCount ?? 0) + 1,
         });
       }
-    }
 
-    transaction.objectStore("metadata").put({
-      id: "app",
-      schemaVersion: SCHEMA_VERSION,
-      createdAt: metadata?.createdAt ?? completedAt,
-      updatedAt: completedAt,
+      metadataStore.put({
+        id: "app",
+        schemaVersion: SCHEMA_VERSION,
+        createdAt: metadata?.createdAt ?? completedAt,
+        updatedAt: completedAt,
+      });
+
+      // Keep review progress device-local and commit it with the new workout.
+      let shouldRequestReview = false;
+      const completedWorkouts = reviewProgress?.completedWorkouts ?? 0;
+      if (isNativeAndroid && completedWorkouts < PLAY_REVIEW_MILESTONES.at(-1)) {
+        const nextCount = completedWorkouts + 1;
+        metadataStore.put({ id: PLAY_REVIEW_PROGRESS_ID, completedWorkouts: nextCount });
+        shouldRequestReview = PLAY_REVIEW_MILESTONES.includes(nextCount);
+      }
+
+      markBackupChange(transaction);
+      return { status: "saved", workoutLog, shouldRequestReview };
     });
 
-    markBackupChange(transaction);
-    await done;
-    return workoutLog;
+    try {
+      const [result] = await Promise.all([save, done]);
+      return result;
+    } catch (error) {
+      try { transaction.abort(); } catch {}
+      await done.catch(() => {});
+      throw error;
+    }
   } finally {
     database.close();
   }

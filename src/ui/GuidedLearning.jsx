@@ -46,6 +46,7 @@ export function createPracticeStore() {
     finishActiveWorkoutSession(session) {
       const log = createWorkoutLogFromSession(session, new Date().toISOString());
       data = { ...data, workoutLogs: [log], activeWorkoutSessions: [] };
+      return { status: "saved", workoutLog: log, shouldRequestReview: false };
     },
   };
   return store;

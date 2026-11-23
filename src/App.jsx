@@ -1362,6 +1362,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
   const scrollPositionsRef = useRef(new Map());
   const templateDragRef = useRef(null);
   const activeWorkoutSaveQueueRef = useRef(Promise.resolve());
+  const finishingWorkoutRef = useRef(false);
   const confirmationRequestRef = useRef(null);
   const importFileInputRef = useRef(null);
   const pendingImportFileRef = useRef(null);
@@ -2204,6 +2205,8 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
 
   const persistActiveWorkoutSession = useCallback(
     (session, { showError = false } = {}) => {
+      if (finishingWorkoutRef.current) return;
+
       const saveTask = () => saveActiveWorkoutSession(session);
 
       activeWorkoutSaveQueueRef.current = activeWorkoutSaveQueueRef.current
@@ -2596,6 +2599,8 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
   }, [persistActiveWorkoutSession, setActiveWorkoutSession]);
 
   const handleFinishActiveWorkout = useCallback(async () => {
+    if (finishingWorkoutRef.current) return;
+
     const currentSession = getActiveWorkoutSessionFromState(stateRef.current);
 
     if (!currentSession) {
@@ -2603,6 +2608,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
       return;
     }
 
+    finishingWorkoutRef.current = true;
     const finalSession = {
       ...currentSession,
       updatedAt: new Date().toISOString(),
@@ -2610,7 +2616,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
 
     try {
       await activeWorkoutSaveQueueRef.current.catch(() => {});
-      await finishActiveWorkoutSession(finalSession);
+      const result = await finishActiveWorkoutSession(finalSession);
       activeWorkoutSaveQueueRef.current = Promise.resolve();
       const refreshedData = await refreshData();
       navigate(
@@ -2623,12 +2629,21 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
         },
         { history: "replace", scroll: "top" },
       );
-      showNotice(t("notice.workoutSaved"));
+      if (result.status === "missing") {
+        showNotice(t("notice.activeWorkoutMissing"), "error");
+      } else if (result.status === "saved") {
+        showNotice(t("notice.workoutSaved"));
+      }
+      if (result.shouldRequestReview) {
+        void gymCycleAndroid.requestInAppReview().catch(() => {});
+      }
     } catch (error) {
       console.error(error);
       showNotice(t("notice.workoutFinishFailed"), "error");
+    } finally {
+      finishingWorkoutRef.current = false;
     }
-  }, [navigate, refreshData, showNotice]);
+  }, [finishActiveWorkoutSession, navigate, refreshData, showNotice]);
 
   const openJournalWorkout = useCallback(
     (workoutLogId) => {
