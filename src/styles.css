@@ -1831,6 +1831,16 @@ button.journal-card:active {
   font-weight: 500;
 }
 
+.plan-row.about-app-version-row {
+  justify-content: center;
+}
+
+.plan-row.about-app-version-row strong,
+.plan-row.about-app-version-row span
+{
+  font-size: 16px;
+}
+
 .training-day-row {
   width: 100%;
   appearance: none;

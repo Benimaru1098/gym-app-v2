@@ -112,6 +112,7 @@
     "exportPrepared": "Export ready",
     "exportSaved": "Export saved",
     "exportFailed": "Couldn't export your data",
+    "ratingPageOpenFailed": "Couldn't open the app's store listing",
     "importFileInvalid": "Couldn't read the import file. Choose a JSON file exported from the app.",
     "importSucceeded": "Data imported",
     "workoutsCleared": "Workout log cleared",

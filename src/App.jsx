@@ -77,6 +77,7 @@ const SINGLE_MUSCLE_ILLUSTRATION_KEYS = {
 const workoutImagePreloadCache = new Map();
 const HISTORY_TAG = "gym-app-react";
 const PRIVACY_POLICY_URL = "https://gym-app-v2-flax.vercel.app/privacy.html";
+const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.gymbe.app";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
 const TEMPLATE_DRAG_MAX_SCROLL_STEP = 18;
 const TEMPLATE_DRAG_REORDER_ANIMATION_MS = 150;
@@ -1820,6 +1821,19 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     deferredInstallPromptRef.current = null;
   }, [showNotice]);
 
+  const handleRateApp = useCallback(async (event) => {
+    if (!isNativeAndroid) return;
+    event.preventDefault();
+
+    try {
+      const { opened } = await gymCycleAndroid.openAppRating();
+      if (opened) return;
+    } catch (error) {
+      console.warn("Could not open the app's store listing", error);
+    }
+    showNotice(t("notice.ratingPageOpenFailed"), "error");
+  }, [showNotice]);
+
   const handleTabChange = useCallback(
     (tabId) => {
       const current = stateRef.current;
@@ -3356,6 +3370,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
             onOpenExerciseHistory={openExerciseHistory}
             onOpenExerciseTechnique={openExerciseTechnique}
             onOpenSettings={openSettings}
+            onRateApp={handleRateApp}
             onLearn={startLearning}
             onOpenBackup={openBackup}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
@@ -3480,6 +3495,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     handleContinueWorkout,
     handleImportData,
     handleInstallApp,
+    handleRateApp,
     handleSaveExercise,
     handleSaveExerciseTechnique,
     handleSaveTemplate,
@@ -3766,6 +3782,7 @@ function HomeView({
   onOpenExerciseHistory,
   onOpenExerciseTechnique,
   onOpenSettings,
+  onRateApp,
   onOpenBackup,
   onOpenFreeWorkoutPreparation,
   onOpenWorkoutPreparation,
@@ -3789,6 +3806,7 @@ function HomeView({
     return (
       <SettingsScreen
         onLearn={onLearn}
+        onRateApp={onRateApp}
         isStandalone={isStandalone}
         onBack={onBack}
         onClearWorkouts={onClearWorkouts}
@@ -3992,7 +4010,7 @@ function ThemeSettings() {
   );
 }
 
-function SettingsScreen({ onLearn, isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
+function SettingsScreen({ onLearn, onRateApp, isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
   const { t, i18n } = useTranslation("screens");
   const privacyPolicyUrl = i18n.resolvedLanguage === "en" ? `${PRIVACY_POLICY_URL}#en` : PRIVACY_POLICY_URL;
 
@@ -4053,14 +4071,6 @@ function SettingsScreen({ onLearn, isStandalone, onBack, onClearWorkouts, onExpo
         </div>
         <a
           className="action-button settings-contact-button"
-          href={privacyPolicyUrl}
-          target={isNativeAndroid ? undefined : "_blank"}
-          rel="noopener noreferrer"
-        >
-          <span>{t("settings.privacyPolicy")}</span>
-        </a>
-        <a
-          className="action-button settings-contact-button"
           href="https://t.me/ai_profix"
           target="_blank"
           rel="noopener noreferrer"
@@ -4069,6 +4079,23 @@ function SettingsScreen({ onLearn, isStandalone, onBack, onClearWorkouts, onExpo
         </a>
         <a className="action-button settings-contact-button" href="mailto:aidik1098@gmail.com">
           <span>{t("settings.email")}</span>
+        </a>
+        <a
+          className="action-button settings-contact-button"
+          href={PLAY_STORE_URL}
+          onClick={onRateApp}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>{t("settings.rateApp")}</span>
+        </a>
+        <a
+          className="action-button settings-contact-button"
+          href={privacyPolicyUrl}
+          target={isNativeAndroid ? undefined : "_blank"}
+          rel="noopener noreferrer"
+        >
+          <span>{t("settings.privacyPolicy")}</span>
         </a>
       </section>
 
