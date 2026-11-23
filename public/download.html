@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Gymbe">
+    <meta property="og:image" content="https://gym-app-v2-flax.vercel.app/assets/download/gymbe-icon.png">
+    <title>Gymbe</title>
+    <link rel="icon" href="./assets/download/gymbe-icon.png" type="image/png">
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+
+      body {
+        margin: 0;
+        font: 1rem/1.3 Roboto, system-ui, sans-serif;
+      }
+
+      main {
+        max-width: 25rem;
+        margin-inline: auto;
+        padding: 24px 16px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+
+      .brand img {
+        border-radius: 12px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 1.875rem;
+        letter-spacing: -.03em;
+      }
+
+      .destinations {
+        display: grid;
+        gap: 12px;
+      }
+
+      .destinations a:focus-visible {
+        outline: 2px solid #715fdc;
+        outline-offset: 3px;
+      }
+
+      .destinations img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      /* Fit the link to the badge's artwork inside the PNG's transparent margins. */
+      .play {
+        position: relative;
+        overflow: hidden;
+        aspect-ratio: 646 / 194;
+      }
+
+      .play img {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+      }
+
+      .web {
+        display: flex;
+        align-items: center;
+        gap: 7%;
+        box-sizing: border-box;
+        min-height: 56px;
+        padding: 12px 8%;
+        aspect-ratio: 646 / 194;
+        border-radius: 10px;
+        background: #715fdc;
+        color: #fff;
+        font-size: clamp(1.125rem, 6vw, 1.625rem);
+        font-weight: 600;
+        text-decoration: none;
+      }
+
+      .web svg {
+        flex: none;
+        width: 20%;
+        height: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="brand">
+        <img src="./assets/download/gymbe-icon.png" width="56" height="56" alt="">
+        <h1>Gymbe</h1>
+      </header>
+      <nav class="destinations">
+        <a class="play" href="https://play.google.com/store/apps/details?id=com.gymbe.app">
+          <img src="./assets/download/google-play-ru.png" width="646" height="250" alt="Скачать из Google Play">
+        </a>
+        <!-- Replace the catalog URL when the Gymbe listing is public. -->
+        <a href="https://www.rustore.ru/catalog">
+          <img src="./assets/download/rustore.svg" width="111" height="40" alt="Открыть RuStore">
+        </a>
+        <a class="web" href="./">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <ellipse cx="12" cy="12" rx="4" ry="9"></ellipse>
+            <path d="M3 12h18"></path>
+          </svg>
+          Веб-версия
+        </a>
+      </nav>
+    </main>
+  </body>
+</html>
