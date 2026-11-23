@@ -1,26 +1,8 @@
 import { animate, AnimatePresence, LayoutGroup, mix, motion, useDragControls, useIsPresent, useMotionValue, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  clearWorkoutLogs,
-  deleteActiveWorkoutSessionsForWorkoutGroup,
-  deleteExercise,
-  deleteExerciseTemplate,
-  deleteWorkoutGroup,
-  deleteWorkoutLog,
-  exportAppData,
-  finishActiveWorkoutSession,
-  getImportDataCounts,
-  importAppData,
-  ImportSelectionError,
-  loadAppData,
-  saveActiveWorkoutSession,
-  saveExercise,
-  saveExerciseTemplate,
-  saveWorkoutGroup,
-  saveWorkoutGroupSelectedTemplate,
-  saveWorkoutLogSets,
-} from "./data/storage.js";
+import * as appStorage from "./data/storage.js";
+import { takeTourOffer } from "./platform/tourOffer.js";
 import { initialData, TRACKING_TYPES } from "./data/seed.js";
 import { getExerciseMedia } from "./domain/exerciseMedia.js";
 import {
@@ -362,6 +344,7 @@ function applyHistoryEntry(current, entry) {
 }
 
 function getOpenOverlay(state) {
+  if (state.learningOffer) return "learningOffer";
   if (state.confirmation) {
     return OVERLAYS.confirmation;
   }
@@ -388,6 +371,7 @@ function getOpenOverlay(state) {
 function closeOverlayState(state) {
   return {
     ...state,
+    learningOffer: false,
     activeExerciseReplacement: null,
     confirmation: null,
     exerciseTechniqueViewer: null,
@@ -1361,9 +1345,15 @@ function EditIconButton({ label, onClick }) {
   );
 }
 
-function App() {
+function App({ practice, onLearn, onExitLearning, returnTo }) {
+  const {
+    loadAppData, saveExercise, saveExerciseTemplate, saveWorkoutGroup, saveWorkoutGroupSelectedTemplate,
+    saveActiveWorkoutSession, finishActiveWorkoutSession, deleteActiveWorkoutSessionsForWorkoutGroup,
+    deleteExercise, deleteExerciseTemplate, deleteWorkoutGroup, deleteWorkoutLog, exportAppData,
+    importAppData, getImportDataCounts, ImportSelectionError, saveWorkoutLogSets, clearWorkoutLogs,
+  } = practice?.store ?? appStorage;
   const { i18n: translation } = useTranslation("app");
-  const [state, setState] = useState(createInitialState);
+  const [state, setState] = useState(() => ({ ...createInitialState(), homeView: { name: returnTo } }));
   const language = translation.resolvedLanguage;
   const localizedData = useMemo(() => localizeAppData(state.data, language), [state.data, language]);
   const stateRef = useRef(state);
@@ -1429,12 +1419,25 @@ function App() {
     [patchState],
   );
 
+  const startLearning = useCallback(() => {
+    onLearn().catch(() => showNotice(t("screens:learning.loadFailed"), "error"));
+  }, [onLearn, showNotice]);
+
+  function skipLearningOffer() {
+    patchState({ learningOffer: false });
+    if (window.history.state?.overlay === "learningOffer") {
+      window.history.back();
+    }
+  }
+
   const pushOverlayHistory = useCallback((overlay) => {
+    if (practice) return;
     window.history.pushState(createOverlayHistoryEntry(stateRef.current, overlay), "");
   }, []);
 
   const closeOverlay = useCallback(
     (overlay, patch) => {
+      if (practice) { patchState(patch); return; }
       if (window.history.state?.tag === HISTORY_TAG && window.history.state.overlay === overlay) {
         window.history.back();
         return;
@@ -1526,6 +1529,7 @@ function App() {
   }, []);
 
   const writeHistoryState = useCallback((method = "push") => {
+    if (practice) return;
     const entry = createHistoryEntry(stateRef.current);
     if (method === "replace") {
       window.history.replaceState(entry, "");
@@ -1557,6 +1561,7 @@ function App() {
         }
       });
 
+      if (practice) return;
       if (history === "replace") {
         window.history.replaceState(createHistoryEntry(next), "");
       } else if (history === "push") {
@@ -1586,13 +1591,13 @@ function App() {
   useEffect(() => {
     let mounted = true;
     let stopBackup;
-    refreshData().then(() => {
-      if (!mounted || !isNativeAndroid) return;
-
-      stopBackup = startAutomaticBackup();
-      if (takeBackupSetupOffer()) {
-        navigate({ activeTab: "home", homeView: { name: "backup" } });
+    loadAppData().then((data) => {
+      if (!mounted) return;
+      if (!practice && isNativeAndroid) {
+        stopBackup = startAutomaticBackup();
+        if (takeBackupSetupOffer()) navigate({ activeTab: "home", homeView: { name: "backup" } });
       }
+      patchState({ data, isLoading: false });
     }).catch((error) => {
       if (!mounted) return;
       console.error(error);
@@ -1602,9 +1607,21 @@ function App() {
       mounted = false;
       stopBackup?.();
     };
-  }, [navigate, patchState, refreshData]);
+  }, [navigate, patchState, loadAppData, practice]);
 
   useEffect(() => {
+    if (!practice && !state.isLoading && state.data && state.homeView.name === "overview" &&
+        state.activeTab === "home" && takeTourOffer()) {
+      patchState({ learningOffer: true });
+      pushOverlayHistory("learningOffer");
+    }
+  }, [state.isLoading, state.homeView.name, state.activeTab, practice, patchState, pushOverlayHistory]);
+
+  useEffect(() => {
+    if (practice) {
+      window.addEventListener("popstate", onExitLearning);
+      return () => window.removeEventListener("popstate", onExitLearning);
+    }
     writeHistoryState("replace");
 
     const handlePopState = (event) => {
@@ -1620,7 +1637,7 @@ function App() {
 
       if (openOverlay && !entry.overlay) {
         const current = stateRef.current;
-        if (current.importDraft?.status === "importing") {
+        if (current.learningOffer || current.importDraft?.status === "importing") {
           pushOverlayHistory(openOverlay);
           return;
         }
@@ -1664,7 +1681,7 @@ function App() {
   }, [pushOverlayHistory, restoreScrollPosition, saveCurrentScrollPosition, writeHistoryState]);
 
   useEffect(() => {
-    if (isNativeAndroid) return;
+    if (practice || isNativeAndroid) return;
 
     const handleBeforeInstallPrompt = (event) => {
       event.preventDefault();
@@ -1686,7 +1703,7 @@ function App() {
   }, [patchState]);
 
   useEffect(() => {
-    if (isNativeAndroid || !("serviceWorker" in navigator)) {
+    if (practice || isNativeAndroid || !("serviceWorker" in navigator)) {
       return;
     }
 
@@ -3324,6 +3341,7 @@ function App() {
             onOpenExerciseHistory={openExerciseHistory}
             onOpenExerciseTechnique={openExerciseTechnique}
             onOpenSettings={openSettings}
+            onLearn={startLearning}
             onOpenBackup={openBackup}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
             onOpenWorkoutPreparation={openWorkoutPreparation}
@@ -3466,6 +3484,7 @@ function App() {
     openExerciseTechniqueEditor,
     openFreeWorkoutPreparation,
     openSettings,
+    startLearning,
     openBackup,
     openJournalFilter,
     openJournalWorkout,
@@ -3518,6 +3537,14 @@ function App() {
       />
 
       <Notice notices={state.notices} />
+      {practice && <practice.Guide state={state} store={practice.store} onExit={() => window.history.back()} />}
+      {state.learningOffer && <ModalDialog title={t("screens:learning.welcome")}
+        actions={<>
+          <button className="action-button secondary-action" onClick={skipLearningOffer}>{t("screens:learning.skip")}</button>
+          <button className="action-button" onClick={startLearning}>{t("screens:learning.start")}</button>
+        </>}>
+        <p className="confirmation-message">{t("screens:learning.intro")}</p>
+      </ModalDialog>}
 
       <AnimatePresence mode="wait">
         {state.confirmation ? (
@@ -3655,6 +3682,7 @@ function BottomNav({ activeTab, onTabChange }) {
               type="button"
               aria-label={t(tab.labelKey, { ns: "app" })}
               aria-current={isActive ? "page" : undefined}
+              data-learn-tab={tab.id}
               onClick={() => onTabChange(tab.id)}
             >
               {isActive ? (
@@ -3707,6 +3735,7 @@ function Notice({ notices }) {
 }
 
 function HomeView({
+  onLearn,
   data,
   homeView,
   freeWorkoutDraft,
@@ -3744,6 +3773,7 @@ function HomeView({
   if (homeView.name === "settings") {
     return (
       <SettingsScreen
+        onLearn={onLearn}
         isStandalone={isStandalone}
         onBack={onBack}
         onClearWorkouts={onClearWorkouts}
@@ -3947,7 +3977,7 @@ function ThemeSettings() {
   );
 }
 
-function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
+function SettingsScreen({ onLearn, isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
   const { t, i18n } = useTranslation("screens");
   const privacyPolicyUrl = i18n.resolvedLanguage === "en" ? `${PRIVACY_POLICY_URL}#en` : PRIVACY_POLICY_URL;
 
@@ -4001,6 +4031,7 @@ function SettingsScreen({ isStandalone, onBack, onClearWorkouts, onExportData, o
         <div className="section-title">
           <span>{t("settings.about")}</span>
         </div>
+        <button className="action-button secondary-action" onClick={onLearn}>{t("learning.replay")}</button>
         <div className="plan-row about-app-version-row">
           <strong>{t("settings.version")}</strong>
           <span>1.0</span>
@@ -4043,7 +4074,7 @@ function WorkoutCard({ card, illustrationKey, imageSrc, onOpen }) {
   const lastDoneLabel = formatLastWorkoutLabel(card.lastWorkoutDate);
 
   return (
-    <button className="workout-card workout-card-button" type="button" data-illustration={illustrationKey} onClick={onOpen}>
+    <button className="workout-card workout-card-button" type="button" data-illustration={illustrationKey} data-learn-day={card.workoutGroup.id} onClick={onOpen}>
       <div className="workout-card-content">
         <div className="workout-card-copy">
           <h2 className={`workout-name-stack${nameParts.length > 1 ? "" : " is-single-name"}`} aria-label={card.workoutGroup.id === FREE_WORKOUT_GROUP_ID ? t("domain:freeWorkout") : card.workoutGroup.name}>
@@ -4121,6 +4152,7 @@ function WorkoutPreparationScreen({
           {details.templateRows.map((plan) => (
             <button
               key={plan.muscleGroup.id}
+              data-learn-picker={plan.muscleGroup.id}
               className="plan-row prep-template-row prep-template-select"
               type="button"
               onClick={() => onOpenTemplateSelector(plan.muscleGroup.id, details.workoutGroup.id)}
@@ -5085,6 +5117,7 @@ function PlanOverview({
               key={summary.muscleGroup.id}
               className="plan-summary-card plan-summary-button"
               type="button"
+              data-learn-templates={summary.muscleGroup.id}
               onClick={() => onOpenTemplateGroup(summary.muscleGroup.id)}
             >
               <div className="plan-summary-card-copy">
@@ -5115,6 +5148,7 @@ function PlanOverview({
               key={summary.muscleGroup.id}
               className="plan-summary-card plan-summary-button"
               type="button"
+              data-learn-library={summary.muscleGroup.id}
               onClick={() => onOpenExerciseGroup(summary.muscleGroup.id)}
             >
               <div className="plan-summary-card-copy">
@@ -5160,6 +5194,7 @@ function TrainingDayFormScreen({ data, draft, isEdit, onBack, onDelete, onSave, 
               return (
                 <button
                   key={muscleGroup.id}
+                  data-learn-muscle={muscleGroup.id}
                   className={`muscle-chip-button training-day-muscle-chip${isSelected ? " is-selected" : ""}`}
                   type="button"
                   aria-pressed={isSelected}
@@ -5501,6 +5536,7 @@ function TemplateExerciseBuilder({ details, selectedExerciseIds, onAddExercise, 
                 return (
                   <button
                     key={exercise.id}
+                    data-learn-exercise={exercise.id}
                     className={`plan-row template-base-exercise-button${isBaseSelected ? " is-selected" : ""}`}
                     type="button"
                     aria-pressed={isBaseSelected}
@@ -6765,6 +6801,7 @@ function TemplateSelector({ data, selector, onClose, onSelect }) {
               key={template.id}
               className={`template-select-option${template.id === selectedTemplateId ? " is-selected" : ""}`}
               type="button"
+              data-learn-template={template.id}
               onClick={() => onSelect(template.id)}
             >
               <span>{template.name}</span>
@@ -6874,4 +6911,19 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
   );
 }
 
-export default App;
+export default function Gymbe() {
+  const [practice, setPractice] = useState(null);
+  const [returnTo, setReturnTo] = useState("overview");
+  const start = useCallback(async () => {
+    const entry = window.history.state;
+    const { createPracticeStore, Guide } = await import("./ui/GuidedLearning.jsx");
+    if (window.history.state !== entry || entry?.learning) return;
+    const method = entry?.overlay === "learningOffer" ? "replaceState" : "pushState";
+    window.history[method]({ learning: true }, "");
+    setReturnTo(entry?.homeView?.name === "settings" ? "settings" : "overview");
+    setPractice({ store: createPracticeStore(), Guide });
+  }, []);
+  const exit = useCallback(() => setPractice(null), []);
+  return <App key={practice ? "practice" : "live"} practice={practice} onLearn={start}
+    returnTo={practice ? "overview" : returnTo} onExitLearning={exit} />;
+}

@@ -1,0 +1,37 @@
+.learning-spotlight {
+  position: fixed;
+  z-index: 80;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 0 0 200vmax rgba(0, 0, 0, .56);
+}
+.learning-tip {
+  position: fixed;
+  z-index: 81;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, calc(100% - 24px));
+  max-height: 48dvh;
+  overflow: auto;
+  padding: 12px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.learning-tip small { color: var(--text-soft); font-size: 16px; }
+.learning-tip p { margin: 5px 0; }
+.learning-tip > div { display: flex; justify-content: space-between; }
+.learning-tip button {
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-decoration: underline;
+}
+.learning-tip button:disabled { opacity: .45; }

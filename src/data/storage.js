@@ -10,6 +10,7 @@ import { SCHEMA_VERSION, createInitialData, initialData } from "./seed.js";
 import techniqueCatalog from "./exercise-techniques.json" with { type: "json" };
 import legacyTechniqueFingerprints from "./legacy-technique-fingerprints.json" with { type: "json" };
 import { isNativeAndroid } from "../platform/android.js";
+import { scheduleTourOffer } from "../platform/tourOffer.js";
 
 const DB_NAME = "gym-cycle-db";
 const DB_VERSION = 3;
@@ -299,6 +300,7 @@ async function seedDatabase(database) {
 
   markBackupChange(transaction);
   await done;
+  scheduleTourOffer();
   return data;
 }
 
@@ -1195,7 +1197,7 @@ function getWorkoutLogTemplateIds(log) {
   return templateIds;
 }
 
-function createWorkoutLogFromSession(session, completedAt) {
+export function createWorkoutLogFromSession(session, completedAt) {
   const exerciseLogs = (session.exerciseLogs ?? []).map((exerciseLog) => ({
     exerciseId: exerciseLog.exerciseId,
     exerciseNameSnapshot: exerciseLog.exerciseNameSnapshot,

@@ -54,12 +54,12 @@ export default function ModalDialog({ title, onClose, actions, children }) {
       onCancel={(event) => {
         event.preventDefault();
         if (isPresent) {
-          onClose();
+          onClose?.();
         }
       }}
       onClick={(event) => {
         if (isPresent && event.target === event.currentTarget) {
-          onClose();
+          onClose?.();
         }
       }}
     >
