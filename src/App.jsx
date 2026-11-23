@@ -78,6 +78,7 @@ const workoutImagePreloadCache = new Map();
 const HISTORY_TAG = "gym-app-react";
 const PRIVACY_POLICY_URL = "https://gym-app-v2-flax.vercel.app/privacy.html";
 const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.gymbe.app";
+const APP_DOWNLOAD_URL = "https://gym-app-v2-flax.vercel.app/download.html";
 const TEMPLATE_DRAG_SCROLL_EDGE = 72;
 const TEMPLATE_DRAG_MAX_SCROLL_STEP = 18;
 const TEMPLATE_DRAG_REORDER_ANIMATION_MS = 150;
@@ -1834,6 +1835,30 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     showNotice(t("notice.ratingPageOpenFailed"), "error");
   }, [showNotice]);
 
+  const handleShareApp = useCallback(async () => {
+    try {
+      if (isNativeAndroid) {
+        await gymCycleAndroid.shareApp({ url: APP_DOWNLOAD_URL });
+        return;
+      }
+      if (navigator.share) {
+        await navigator.share({ title: "Gymbe", url: APP_DOWNLOAD_URL });
+        return;
+      }
+    } catch (error) {
+      if (error?.name === "AbortError" || error?.name === "InvalidStateError") return;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(APP_DOWNLOAD_URL);
+        showNotice(t("notice.appLinkCopied"), "success");
+        return;
+      }
+    } catch {}
+    showNotice(t("notice.shareAppFailed"), "error");
+  }, [showNotice]);
+
   const handleTabChange = useCallback(
     (tabId) => {
       const current = stateRef.current;
@@ -3371,6 +3396,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
             onOpenExerciseTechnique={openExerciseTechnique}
             onOpenSettings={openSettings}
             onRateApp={handleRateApp}
+            onShareApp={handleShareApp}
             onLearn={startLearning}
             onOpenBackup={openBackup}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
@@ -3498,6 +3524,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     handleRateApp,
     handleSaveExercise,
     handleSaveExerciseTechnique,
+    handleShareApp,
     handleSaveTemplate,
     handleSaveTrainingDay,
     handleTemplateDragStart,
@@ -3783,6 +3810,7 @@ function HomeView({
   onOpenExerciseTechnique,
   onOpenSettings,
   onRateApp,
+  onShareApp,
   onOpenBackup,
   onOpenFreeWorkoutPreparation,
   onOpenWorkoutPreparation,
@@ -3807,6 +3835,7 @@ function HomeView({
       <SettingsScreen
         onLearn={onLearn}
         onRateApp={onRateApp}
+        onShareApp={onShareApp}
         isStandalone={isStandalone}
         onBack={onBack}
         onClearWorkouts={onClearWorkouts}
@@ -4010,7 +4039,7 @@ function ThemeSettings() {
   );
 }
 
-function SettingsScreen({ onLearn, onRateApp, isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
+function SettingsScreen({ onLearn, onRateApp, onShareApp, isStandalone, onBack, onClearWorkouts, onExportData, onImportData, onInstall, onOpenBackup }) {
   const { t, i18n } = useTranslation("screens");
   const privacyPolicyUrl = i18n.resolvedLanguage === "en" ? `${PRIVACY_POLICY_URL}#en` : PRIVACY_POLICY_URL;
 
@@ -4089,6 +4118,9 @@ function SettingsScreen({ onLearn, onRateApp, isStandalone, onBack, onClearWorko
         >
           <span>{t("settings.rateApp")}</span>
         </a>
+        <button className="action-button" type="button" onClick={onShareApp}>
+          <span>{t("settings.shareApp")}</span>
+        </button>
         <a
           className="action-button settings-contact-button"
           href={privacyPolicyUrl}
