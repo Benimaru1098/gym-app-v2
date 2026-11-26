@@ -524,14 +524,13 @@ h2 {
   opacity: 0.58;
 }
 
-.about-app-version-row {
-  justify-content: space-between;
+.about-app-version-row > span {
+  font-size: 16px;
+  font-weight: 500;
 }
 
-.about-app-version-row > span {
-  color: var(--text-soft);
-  font-size: 15px;
-  font-weight: 500;
+.plan-row.about-app-version-row {
+  justify-content: center;
 }
 
 .settings-contact-button {
@@ -762,6 +761,12 @@ h2 {
 .app-dialog-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 116px), 1fr));
+  gap: 8px;
+}
+
+.learning-picker-options {
+  display: grid;
+  grid-column: 1 / -1;
   gap: 8px;
 }
 
@@ -1661,6 +1666,37 @@ button.journal-card:active {
   padding-right: 5px;
 }
 
+.active-set-input.shows-weight-conversion {
+  position: relative;
+}
+
+.active-set-input.shows-weight-conversion > :not(.active-set-weight-preview) {
+  opacity: 0;
+}
+
+.active-set-weight-preview {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 19px;
+  padding: 0 4px 0 8px;
+  border: 0;
+  border-radius: inherit;
+  background: var(--surface-3);
+  color: var(--text);
+  font: inherit;
+  font-size: 17px;
+}
+
+.active-set-weight-preview strong {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0 auto;
+}
+
 .active-set-remove-button {
   position: relative;
   display: grid;
@@ -1704,7 +1740,8 @@ button.journal-card:active {
   color: var(--text);
 }
 
-.active-add-set-button {
+.active-add-set-button,
+.active-weight-conversion-button {
   justify-self: center;
   width: 84%;
   min-height: 40px;
@@ -1829,16 +1866,6 @@ button.journal-card:active {
   color: var(--text);
   font-size: 15px;
   font-weight: 500;
-}
-
-.plan-row.about-app-version-row {
-  justify-content: center;
-}
-
-.plan-row.about-app-version-row strong,
-.plan-row.about-app-version-row span
-{
-  font-size: 16px;
 }
 
 .training-day-row {

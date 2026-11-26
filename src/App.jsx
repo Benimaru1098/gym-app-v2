@@ -2,7 +2,7 @@ import { animate, AnimatePresence, LayoutGroup, mix, motion, useDragControls, us
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as appStorage from "./data/storage.js";
-import { takeTourOffer } from "./platform/tourOffer.js";
+import { hasWorkoutLearningOffer, takeTourOffer, takeWorkoutLearningOffer } from "./platform/tourOffer.js";
 import { initialData, TRACKING_TYPES } from "./data/seed.js";
 import { getExerciseMedia } from "./domain/exerciseMedia.js";
 import {
@@ -30,6 +30,7 @@ import {
 } from "./domain/selectors.js";
 import { buildProgressionAdvice } from "./domain/progressionAdvice.js";
 import { isProtectedTemplate } from "./domain/templateRules.js";
+import { convertWeightInput } from "./domain/weightConversion.js";
 import {
   getStoredTechniqueDescription,
   localizeAppData,
@@ -98,6 +99,7 @@ const OVERLAYS = {
   confirmation: "confirmation",
   exerciseTechnique: "exerciseTechnique",
   importData: "importData",
+  learningPicker: "learningPicker",
   templateSelector: "templateSelector",
 };
 function getRestartWorkoutConfirmation() {
@@ -210,6 +212,7 @@ function createInitialState() {
     journalFilter: { selectedMuscleGroupIds: [], selectedExerciseIds: [] },
     journalView: { name: "overview", workoutLogId: null },
     journalVisibleCount: JOURNAL_PAGE_SIZE,
+    learningPicker: false,
     notices: [],
     planView: { name: "overview", muscleGroupId: null, templateId: null, exerciseId: null, trainingDayId: null },
     templateDraft: { name: "", selectedExerciseIds: [] },
@@ -327,6 +330,7 @@ function applyHistoryEntry(current, entry) {
     confirmation: null,
     exerciseTechniqueViewer: null,
     importDraft: null,
+    learningPicker: false,
     templateSelector: null,
   };
 
@@ -347,6 +351,7 @@ function applyHistoryEntry(current, entry) {
 
 function getOpenOverlay(state) {
   if (state.learningOffer) return "learningOffer";
+  if (state.learningPicker) return OVERLAYS.learningPicker;
   if (state.confirmation) {
     return OVERLAYS.confirmation;
   }
@@ -374,6 +379,7 @@ function closeOverlayState(state) {
   return {
     ...state,
     learningOffer: false,
+    learningPicker: false,
     activeExerciseReplacement: null,
     confirmation: null,
     exerciseTechniqueViewer: null,
@@ -1347,7 +1353,7 @@ function EditIconButton({ label, onClick }) {
   );
 }
 
-function App({ practice, onLearn, onExitLearning, returnTo }) {
+function App({ practice, onLearn, onExitLearning, returnState }) {
   const {
     loadAppData, saveExercise, saveExerciseTemplate, saveWorkoutGroup, saveWorkoutGroupSelectedTemplate,
     saveActiveWorkoutSession, finishActiveWorkoutSession, deleteActiveWorkoutSessionsForWorkoutGroup,
@@ -1355,7 +1361,21 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     importAppData, getImportDataCounts, ImportSelectionError, saveWorkoutLogSets, clearWorkoutLogs,
   } = practice?.store ?? appStorage;
   const { i18n: translation } = useTranslation("app");
-  const [state, setState] = useState(() => ({ ...createInitialState(), homeView: { name: returnTo } }));
+  const practiceSession = practice?.store.session;
+  const isWorkoutPractice = Boolean(practiceSession);
+  const startupData = practice?.data ?? returnState?.data;
+  const [state, setState] = useState(() => ({
+    ...createInitialState(),
+    ...returnState,
+    data: startupData ?? null,
+    isLoading: !startupData,
+    activeWorkoutSession: practiceSession ?? returnState?.activeWorkoutSession ?? null,
+    homeView: practiceSession
+      ? { name: "activeWorkout", sessionId: practiceSession.id, workoutGroupId: practiceSession.workoutGroupId }
+      : normalizeHomeView(returnState?.homeView),
+  }));
+  const [workoutPracticeControls, setWorkoutPracticeControls] = useState(null);
+  const exitingWorkoutPracticeRef = useRef(false);
   const language = translation.resolvedLanguage;
   const localizedData = useMemo(() => localizeAppData(state.data, language), [state.data, language]);
   const stateRef = useRef(state);
@@ -1364,11 +1384,12 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
   const scrollPositionsRef = useRef(new Map());
   const templateDragRef = useRef(null);
   const activeWorkoutSaveQueueRef = useRef(Promise.resolve());
+  const openingWorkoutRef = useRef(false);
   const finishingWorkoutRef = useRef(false);
   const confirmationRequestRef = useRef(null);
   const importFileInputRef = useRef(null);
   const pendingImportFileRef = useRef(null);
-  const screenAnimationModeRef = useRef("main");
+  const screenAnimationModeRef = useRef(practice?.fromFirstWorkout ? "secondary-open" : "main");
   const shouldReduceMotion = useReducedMotion();
 
   useEffect(() => {
@@ -1422,8 +1443,8 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     [patchState],
   );
 
-  const startLearning = useCallback(() => {
-    onLearn().catch(() => showNotice(t("screens:learning.loadFailed"), "error"));
+  const startLearning = useCallback((mode) => {
+    onLearn(mode).catch(() => showNotice(t("screens:learning.loadFailed"), "error"));
   }, [onLearn, showNotice]);
 
   function skipLearningOffer() {
@@ -1434,12 +1455,22 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
   }
 
   const pushOverlayHistory = useCallback((overlay) => {
+    if (isWorkoutPractice) {
+      if (!window.history.state?.workoutDetail) {
+        window.history.pushState({ learning: true, workoutDetail: true }, "");
+      }
+      return;
+    }
     if (practice) return;
     window.history.pushState(createOverlayHistoryEntry(stateRef.current, overlay), "");
-  }, []);
+  }, [isWorkoutPractice, practice]);
 
   const closeOverlay = useCallback(
     (overlay, patch) => {
+      if (isWorkoutPractice && window.history.state?.workoutDetail) {
+        window.history.back();
+        return;
+      }
       if (practice) { patchState(patch); return; }
       if (window.history.state?.tag === HISTORY_TAG && window.history.state.overlay === overlay) {
         window.history.back();
@@ -1448,8 +1479,14 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
 
       patchState(patch);
     },
-    [patchState],
+    [isWorkoutPractice, patchState, practice],
   );
+
+  const openLearningPicker = useCallback(() => {
+    if (getOpenOverlay(stateRef.current)) return;
+    patchState({ learningPicker: true });
+    pushOverlayHistory(OVERLAYS.learningPicker);
+  }, [patchState, pushOverlayHistory]);
 
   const requestConfirmation = useCallback((confirmation) => {
     if (confirmationRequestRef.current || getOpenOverlay(stateRef.current)) {
@@ -1564,17 +1601,26 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
         }
       });
 
-      if (practice) return;
+      if (practice) {
+        if (isWorkoutPractice && history === "push" && next.homeView.name === "exerciseHistory") {
+          window.history.pushState({ learning: true, workoutDetail: true }, "");
+        }
+        return;
+      }
       if (history === "replace") {
         window.history.replaceState(createHistoryEntry(next), "");
       } else if (history === "push") {
         window.history.pushState(createHistoryEntry(next), "");
       }
     },
-    [restoreScrollPosition, saveCurrentScrollPosition],
+    [isWorkoutPractice, practice, restoreScrollPosition, saveCurrentScrollPosition],
   );
 
   const goBack = useCallback(() => {
+    if (isWorkoutPractice) {
+      window.history.back();
+      return;
+    }
     const current = stateRef.current;
     const target = getLocalBackTarget(current);
 
@@ -1589,14 +1635,21 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     if (window.history.state?.tag === HISTORY_TAG) {
       window.history.back();
     }
-  }, [navigate]);
+  }, [isWorkoutPractice, navigate]);
+
+  const exitWorkoutPractice = useCallback(() => {
+    if (exitingWorkoutPracticeRef.current) return;
+    exitingWorkoutPracticeRef.current = true;
+    window.history.go(window.history.state?.workoutDetail ? -2 : -1);
+  }, []);
 
   useEffect(() => {
+    if (practice) return;
     let mounted = true;
     let stopBackup;
     loadAppData().then((data) => {
       if (!mounted) return;
-      if (!practice && isNativeAndroid) {
+      if (isNativeAndroid) {
         stopBackup = startAutomaticBackup();
         if (takeBackupSetupOffer()) navigate({ activeTab: "home", homeView: { name: "backup" } });
       }
@@ -1622,8 +1675,19 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
 
   useEffect(() => {
     if (practice) {
-      window.addEventListener("popstate", onExitLearning);
-      return () => window.removeEventListener("popstate", onExitLearning);
+      function handlePracticeBack(event) {
+        if (!isWorkoutPractice || !event.state?.learning) {
+          onExitLearning();
+        } else if (event.state.workoutDetail) {
+          window.history.back();
+        } else if (getOpenOverlay(stateRef.current)) {
+          patchState(closeOverlayState);
+        } else if (stateRef.current.homeView.name === "exerciseHistory") {
+          navigate(getLocalBackTarget(stateRef.current), { history: "replace", scroll: "restore" });
+        }
+      }
+      window.addEventListener("popstate", handlePracticeBack);
+      return () => window.removeEventListener("popstate", handlePracticeBack);
     }
     writeHistoryState("replace");
 
@@ -1681,7 +1745,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [pushOverlayHistory, restoreScrollPosition, saveCurrentScrollPosition, writeHistoryState]);
+  }, [isWorkoutPractice, navigate, onExitLearning, patchState, practice, pushOverlayHistory, restoreScrollPosition, saveCurrentScrollPosition, writeHistoryState]);
 
   useEffect(() => {
     if (practice || isNativeAndroid) return;
@@ -2294,8 +2358,54 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     [persistActiveWorkoutSession, setActiveWorkoutSession],
   );
 
+  const openActiveWorkout = useCallback(async (session, { restart = false, resume = false } = {}) => {
+    if (openingWorkoutRef.current) return;
+    openingWorkoutRef.current = true;
+    const entry = window.history.state;
+
+    try {
+      if (restart) {
+        await activeWorkoutSaveQueueRef.current.catch(() => {});
+        await deleteActiveWorkoutSessionsForWorkoutGroup(session.workoutGroupId);
+      }
+      if (!resume) await saveActiveWorkoutSession(session);
+      const data = resume ? stateRef.current.data : await loadAppData();
+
+      // Keep the preparation screen in place while the first workout lesson loads.
+      const workout = {
+        activeTab: "home",
+        activeWorkoutSession: session,
+        activeExerciseReplacement: null,
+        data,
+        homeView: { name: "activeWorkout", sessionId: session.id, workoutGroupId: session.workoutGroupId },
+      };
+      if (!practice && window.history.state === entry && data?.workoutLogs.length === 0 &&
+          session.exerciseLogs?.length && hasWorkoutLearningOffer()) {
+        try {
+          if (await onLearn("first-workout", { ...workout, freeWorkoutDraft: stateRef.current.freeWorkoutDraft })) return;
+        } catch (error) {
+          console.error(error);
+          if (window.history.state === entry) showNotice(t("screens:learning.loadFailed"), "error");
+        }
+      }
+
+      if (window.history.state !== entry) {
+        if (!resume) patchState({ data });
+        return;
+      }
+      navigate(workout);
+      if (!resume) showNotice(t("notice.workoutStarted"));
+    } catch (error) {
+      console.error(error);
+      showNotice(t("notice.workoutStartFailed"), "error");
+    } finally {
+      openingWorkoutRef.current = false;
+    }
+  }, [deleteActiveWorkoutSessionsForWorkoutGroup, loadAppData, navigate, onLearn, patchState, practice, saveActiveWorkoutSession, showNotice]);
+
   const handleStartWorkout = useCallback(
     async (workoutGroupId) => {
+      if (openingWorkoutRef.current) return;
       const current = stateRef.current;
       const unfinishedSession = getActiveWorkoutSessionForGroup(current, workoutGroupId);
 
@@ -2321,35 +2431,14 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
         return;
       }
 
-      try {
-        if (unfinishedSession) {
-          await activeWorkoutSaveQueueRef.current.catch(() => {});
-          await deleteActiveWorkoutSessionsForWorkoutGroup(workoutGroupId);
-        }
-
-        await saveActiveWorkoutSession(session);
-        const refreshedData = await refreshData();
-        navigate(
-          {
-            activeTab: "home",
-            activeWorkoutSession: session,
-            activeExerciseReplacement: null,
-            data: refreshedData,
-            homeView: { name: "activeWorkout", sessionId: session.id, workoutGroupId },
-          },
-          { history: "push", scroll: "top" },
-        );
-        showNotice(t("notice.workoutStarted"));
-      } catch (error) {
-        console.error(error);
-        showNotice(t("notice.workoutStartFailed"), "error");
-      }
+      await openActiveWorkout(session, { restart: Boolean(unfinishedSession) });
     },
-    [navigate, refreshData, requestConfirmation, showNotice],
+    [openActiveWorkout, requestConfirmation, showNotice],
   );
 
   const handleStartFreeWorkout = useCallback(
     async () => {
+      if (openingWorkoutRef.current) return;
       const current = stateRef.current;
       const selectedExerciseIds = current.freeWorkoutDraft.selectedExerciseIds;
 
@@ -2377,31 +2466,9 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
         return;
       }
 
-      try {
-        if (unfinishedSession) {
-          await activeWorkoutSaveQueueRef.current.catch(() => {});
-          await deleteActiveWorkoutSessionsForWorkoutGroup(FREE_WORKOUT_GROUP_ID);
-        }
-
-        await saveActiveWorkoutSession(session);
-        const refreshedData = await refreshData();
-        navigate(
-          {
-            activeTab: "home",
-            activeWorkoutSession: session,
-            activeExerciseReplacement: null,
-            data: refreshedData,
-            homeView: { name: "activeWorkout", sessionId: session.id, workoutGroupId: FREE_WORKOUT_GROUP_ID },
-          },
-          { history: "push", scroll: "top" },
-        );
-        showNotice(t("notice.workoutStarted"));
-      } catch (error) {
-        console.error(error);
-        showNotice(t("notice.workoutStartFailed"), "error");
-      }
+      await openActiveWorkout(session, { restart: Boolean(unfinishedSession) });
     },
-    [navigate, refreshData, requestConfirmation, showNotice],
+    [openActiveWorkout, requestConfirmation, showNotice],
   );
 
   const handleContinueWorkout = useCallback(
@@ -2416,22 +2483,19 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
         return;
       }
 
-      navigate(
-        {
-          activeTab: "home",
-          activeWorkoutSession: session,
-          activeExerciseReplacement: null,
-          homeView: { name: "activeWorkout", sessionId: session.id, workoutGroupId: session.workoutGroupId },
-        },
-        { history: "push", scroll: "top" },
-      );
+      void openActiveWorkout(session, { resume: true });
     },
-    [navigate, showNotice],
+    [openActiveWorkout, showNotice],
   );
 
   const handleActiveSetChange = useCallback(
-    (exerciseIndex, setIndex, field, value) => {
-      const normalizedValue = field === "weightKg" ? normalizeWeightInput(value) : normalizeRepsInput(value);
+    (exerciseIndex, setIndex, field, value, alternateUnit) => {
+      const isWeight = field === "weightKg";
+      const normalizedValue = isWeight ? normalizeWeightInput(value) : normalizeRepsInput(value);
+      const storedValue = alternateUnit ? convertWeightInput(normalizedValue, alternateUnit) : normalizedValue;
+      const alternateWeight = alternateUnit && normalizedValue
+        ? { unit: alternateUnit, value: normalizedValue }
+        : undefined;
 
       updateActiveWorkoutSession((session) => ({
         ...session,
@@ -2447,7 +2511,8 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
                 currentSetIndex === setIndex
                   ? {
                       ...set,
-                      [field]: normalizedValue,
+                      [field]: storedValue,
+                      ...(isWeight ? { alternateWeight } : {}),
                       ...(field === "reps" &&
                       setIndex === 0 &&
                       normalizedValue !== "" &&
@@ -2488,6 +2553,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
                 setNumber: currentSets.length + 1,
                 weightKg: previousSet.weightKg ?? "",
                 reps: previousSet.reps ?? "",
+                ...(previousSet.alternateWeight ? { alternateWeight: previousSet.alternateWeight } : {}),
                 addedAt: new Date().toISOString(),
               },
             ]),
@@ -3384,6 +3450,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
             homeView={state.homeView}
             freeWorkoutDraft={state.freeWorkoutDraft}
             activeWorkoutSession={state.activeWorkoutSession}
+            onPracticeControlsChange={isWorkoutPractice ? setWorkoutPracticeControls : undefined}
             onBack={goBack}
             onAddActiveSet={handleAddActiveSet}
             onRemoveActiveSet={handleRemoveActiveSet}
@@ -3391,13 +3458,13 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
             onOpenExerciseReplacement={openExerciseReplacement}
             onActivePreviousExercise={handleActivePreviousExercise}
             onActiveNextExercise={handleActiveNextExercise}
-            onFinishActiveWorkout={handleFinishActiveWorkout}
+            onFinishActiveWorkout={isWorkoutPractice ? goBack : handleFinishActiveWorkout}
             onOpenExerciseHistory={openExerciseHistory}
             onOpenExerciseTechnique={openExerciseTechnique}
             onOpenSettings={openSettings}
             onRateApp={handleRateApp}
             onShareApp={handleShareApp}
-            onLearn={startLearning}
+            onLearn={openLearningPicker}
             onOpenBackup={openBackup}
             onOpenFreeWorkoutPreparation={openFreeWorkoutPreparation}
             onOpenWorkoutPreparation={openWorkoutPreparation}
@@ -3531,6 +3598,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     handleTemplateNameChange,
     handleStartFreeWorkout,
     handleStartWorkout,
+    isWorkoutPractice,
     language,
     localizedData,
     openExerciseCreate,
@@ -3542,7 +3610,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
     openExerciseTechniqueEditor,
     openFreeWorkoutPreparation,
     openSettings,
-    startLearning,
+    openLearningPicker,
     openBackup,
     openJournalFilter,
     openJournalWorkout,
@@ -3584,7 +3652,7 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
         {activeView}
       </main>
 
-      <BottomNav activeTab={state.activeTab} onTabChange={handleTabChange} />
+      {isWorkoutPractice ? null : <BottomNav activeTab={state.activeTab} onTabChange={handleTabChange} />}
 
       <input
         ref={importFileInputRef}
@@ -3595,14 +3663,38 @@ function App({ practice, onLearn, onExitLearning, returnTo }) {
       />
 
       <Notice notices={state.notices} />
-      {practice && <practice.Guide state={state} store={practice.store} onExit={() => window.history.back()} />}
+      {practice && (
+        <practice.Guide
+          state={state}
+          store={practice.store}
+          workoutControls={workoutPracticeControls}
+          onExit={isWorkoutPractice ? exitWorkoutPractice : () => window.history.back()}
+        />
+      )}
       {state.learningOffer && <ModalDialog title={t("screens:learning.welcome")}
         actions={<>
           <button className="action-button secondary-action" onClick={skipLearningOffer}>{t("screens:learning.skip")}</button>
-          <button className="action-button" onClick={startLearning}>{t("screens:learning.start")}</button>
+          <button className="action-button" onClick={() => startLearning("intro")}>{t("screens:learning.start")}</button>
         </>}>
         <p className="confirmation-message">{t("screens:learning.intro")}</p>
       </ModalDialog>}
+
+      {state.learningPicker && (
+        <ModalDialog
+          title={t("screens:learning.workout.pickerTitle")}
+          onClose={() => closeOverlay(OVERLAYS.learningPicker, { learningPicker: false })}
+          actions={(
+            <div className="learning-picker-options">
+              <button className="action-button secondary-action" type="button" onClick={() => startLearning("intro")}>
+                {t("screens:learning.workout.introOption")}
+              </button>
+              <button className="action-button secondary-action" type="button" onClick={() => startLearning("workout")}>
+                {t("screens:learning.workout.workoutOption")}
+              </button>
+            </div>
+          )}
+        />
+      )}
 
       <AnimatePresence mode="wait">
         {state.confirmation ? (
@@ -3798,6 +3890,7 @@ function HomeView({
   homeView,
   freeWorkoutDraft,
   activeWorkoutSession,
+  onPracticeControlsChange,
   onBack,
   onAddActiveSet,
   onRemoveActiveSet,
@@ -3855,8 +3948,10 @@ function HomeView({
 
     return (
       <ActiveWorkoutScreen
+        key={session?.id}
         data={data}
         session={session}
+        onPracticeControlsChange={onPracticeControlsChange}
         onBack={onBack}
         onAddSet={onAddActiveSet}
         onRemoveSet={onRemoveActiveSet}
@@ -4095,8 +4190,7 @@ function SettingsScreen({ onLearn, onRateApp, onShareApp, isStandalone, onBack, 
         </div>
         <button className="action-button secondary-action" onClick={onLearn}>{t("learning.replay")}</button>
         <div className="plan-row about-app-version-row">
-          <strong>{t("settings.version")}</strong>
-          <span>1.0</span>
+          <span>{t("settings.version")} 1.1.2</span>
         </div>
         <a
           className="action-button settings-contact-button"
@@ -4638,9 +4732,115 @@ function FreeWorkoutExerciseBuilder({
   );
 }
 
+function ActiveSetInputs({ set, index, exerciseIndex, weightUnit, inputUnit, onSetChange }) {
+  const { t } = useTranslation("screens");
+  const [hasWeightFocus, setHasWeightFocus] = useState(false);
+  const repsInputRef = useRef(null);
+  const isConverting = inputUnit !== weightUnit;
+  const showConversion = isConverting && hasWeightFocus;
+  const storedWeight = formatWeightInput(set.weightKg);
+  const weightValue = isConverting
+    ? set.alternateWeight?.unit === inputUnit
+      ? set.alternateWeight.value
+      : convertWeightInput(storedWeight, weightUnit)
+    : storedWeight;
+  const setLabel = { index: index + 1 };
+
+  function changeWeight(value) {
+    onSetChange(exerciseIndex, index, "weightKg", value, isConverting ? inputUnit : undefined);
+  }
+
+  return (
+    <>
+      <div
+        className="active-set-input input-kg"
+        onFocus={() => setHasWeightFocus(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setHasWeightFocus(false);
+        }}
+      >
+        <button
+          className="active-set-step-button plus-kg"
+          type="button"
+          aria-label={t("active.decreaseWeight", setLabel)}
+          onClick={() => changeWeight(adjustActiveWeightValue(weightValue, -1))}
+        >
+          -
+        </button>
+        <input
+          type="text"
+          inputMode="decimal"
+          enterKeyHint={isConverting ? "done" : undefined}
+          value={weightValue}
+          placeholder="0"
+          aria-label={t("active.weight", { ...setLabel, unit: inputUnit })}
+          onChange={(event) => changeWeight(event.target.value)}
+          onKeyDown={(event) => {
+            if (isConverting && event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <button
+          className="active-set-step-button minus-kg"
+          type="button"
+          aria-label={t("active.increaseWeight", setLabel)}
+          onClick={() => changeWeight(adjustActiveWeightValue(weightValue, 1))}
+        >
+          +
+        </button>
+        <span>{inputUnit}</span>
+      </div>
+      <div className={`active-set-input input-pw${showConversion ? " shows-weight-conversion" : ""}`}>
+        <button
+          className="active-set-step-button plus-pw"
+          type="button"
+          aria-label={t("active.decreaseReps", setLabel)}
+          onClick={() => onSetChange(exerciseIndex, index, "reps", adjustActiveRepsValue(set.reps, -1))}
+        >
+          -
+        </button>
+        <input
+          ref={repsInputRef}
+          type="text"
+          inputMode="numeric"
+          value={set.reps ?? ""}
+          placeholder="0"
+          aria-label={t("active.reps", setLabel)}
+          onChange={(event) => onSetChange(exerciseIndex, index, "reps", event.target.value)}
+        />
+        <button
+          className="active-set-step-button minus-pw"
+          type="button"
+          aria-label={t("active.increaseReps", setLabel)}
+          onClick={() => onSetChange(exerciseIndex, index, "reps", adjustActiveRepsValue(set.reps, 1))}
+        >
+          +
+        </button>
+        <span>{t("units.reps")}</span>
+        {showConversion ? (
+          <button
+            className="active-set-weight-preview"
+            type="button"
+            tabIndex={-1}
+            aria-label={t("active.convertedWeight", { value: storedWeight || "—", unit: weightUnit, ...setLabel })}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => repsInputRef.current?.focus()}
+          >
+            <strong>{storedWeight || "—"}</strong>
+            <span>{weightUnit}</span>
+          </button>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
 function ActiveWorkoutScreen({
   data,
   session,
+  onPracticeControlsChange,
   onBack,
   onAddSet,
   onRemoveSet,
@@ -4670,6 +4870,8 @@ function ActiveWorkoutScreen({
   const setTimePopoverRef = useRef(null);
   const [visibleSetTimeIndex, setVisibleSetTimeIndex] = useState(null);
   const [setTimeNow, setSetTimeNow] = useState(() => Date.now());
+  const [exercisesWithConversion, setExercisesWithConversion] = useState(() => new Set());
+  const isConverting = exercisesWithConversion.has(currentExerciseId);
   const previousExerciseMotionState = exerciseMotionStateRef.current;
   const exerciseMotionMode =
     previousExerciseMotionState.sessionId !== (session?.id ?? null)
@@ -4692,11 +4894,16 @@ function ActiveWorkoutScreen({
   }, [currentExerciseId, currentIndex, session?.id]);
 
   useEffect(() => {
+    onPracticeControlsChange?.({ isConverting, setTimeOpen: visibleSetTimeIndex === 1 });
+  }, [isConverting, onPracticeControlsChange, visibleSetTimeIndex]);
+
+  useEffect(() => {
     if (visibleSetTimeIndex === null) {
       return undefined;
     }
 
     const handleOutsidePointerDown = (event) => {
+      if (onPracticeControlsChange && event.target.closest?.(".learning-tip")) return;
       if (!setTimePopoverRef.current?.contains(event.target)) {
         setVisibleSetTimeIndex(null);
       }
@@ -4704,7 +4911,7 @@ function ActiveWorkoutScreen({
 
     document.addEventListener("pointerdown", handleOutsidePointerDown);
     return () => document.removeEventListener("pointerdown", handleOutsidePointerDown);
-  }, [visibleSetTimeIndex]);
+  }, [onPracticeControlsChange, visibleSetTimeIndex]);
 
   useEffect(() => {
     if (visibleSetTimeIndex === null) {
@@ -4740,6 +4947,11 @@ function ActiveWorkoutScreen({
   const isLastExercise = currentIndex >= session.exerciseLogs.length - 1;
   const sets = exerciseLog.sets?.length ? exerciseLog.sets : [{ setNumber: 1, weightKg: "", reps: "" }];
   const canRemoveSet = sets.length > 1;
+  const alternateUnit = weightUnit === "kg" ? "lb" : "kg";
+  const inputUnit = isConverting ? alternateUnit : weightUnit;
+  const conversionLabel = isConverting
+    ? t(weightUnit === "kg" ? "active.showKilograms" : "active.showPounds")
+    : t("active.convertWeight", { from: alternateUnit, to: weightUnit });
   const exerciseFromBase = data?.exercises?.find((exercise) => exercise.id === exerciseLog.exerciseId) ?? null;
   const exerciseMediaUrl = (exerciseLog.mediaUrl || exerciseFromBase?.mediaUrl || "").trim();
   const techniqueExercise = {
@@ -4748,6 +4960,7 @@ function ActiveWorkoutScreen({
     mediaUrl: exerciseMediaUrl,
     techniqueDescription: exerciseFromBase?.techniqueDescription ?? "",
   };
+  const hasTechnique = Boolean(exerciseMediaUrl || techniqueExercise.techniqueDescription);
   const previousSetsLabel = formatSetList(previousSets);
   const progressionAdvice = buildProgressionAdvice({
     data,
@@ -4779,7 +4992,7 @@ function ActiveWorkoutScreen({
             >
               <span>{t("active.replaceExercise")}</span>
             </button>
-            {exerciseMediaUrl || techniqueExercise.techniqueDescription ? (
+            {hasTechnique ? (
               <button
                 className="action-button secondary-action active-technique-button"
                 type="button"
@@ -4810,6 +5023,21 @@ function ActiveWorkoutScreen({
         </section>
 
         <section className="panel plan-section active-sets-panel">
+          <button
+            className="action-button secondary-action active-weight-conversion-button"
+            type="button"
+            onClick={() => setExercisesWithConversion((current) => {
+              const next = new Set(current);
+              if (next.has(exerciseLog.exerciseId)) {
+                next.delete(exerciseLog.exerciseId);
+              } else {
+                next.add(exerciseLog.exerciseId);
+              }
+              return next;
+            })}
+          >
+            {conversionLabel}
+          </button>
           <div className="active-set-list">
             {sets.map((set, index) => (
               <div
@@ -4860,60 +5088,14 @@ function ActiveWorkoutScreen({
                     </div>
                   ) : null}
                 </div>
-                <div className="active-set-input input-kg">
-                  <button
-                    className="active-set-step-button plus-kg"
-                    type="button"
-                    aria-label={t("active.decreaseWeight", { index: index + 1 })}
-                    onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, -1))}
-                  >
-                    -
-                  </button>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={formatWeightInput(set.weightKg)}
-                    placeholder="0"
-                    aria-label={t("active.weight", { index: index + 1 })}
-                    onChange={(event) => onSetChange(currentIndex, index, "weightKg", event.target.value)}
-                  />
-                  <button
-                    className="active-set-step-button minus-kg"
-                    type="button"
-                    aria-label={t("active.increaseWeight", { index: index + 1 })}
-                    onClick={() => onSetChange(currentIndex, index, "weightKg", adjustActiveWeightValue(set.weightKg, 1))}
-                  >
-                    +
-                  </button>
-                  <span>{weightUnit}</span>
-                </div>
-                <div className="active-set-input input-pw">
-                  <button
-                    className="active-set-step-button plus-pw"
-                    type="button"
-                    aria-label={t("active.decreaseReps", { index: index + 1 })}
-                    onClick={() => onSetChange(currentIndex, index, "reps", adjustActiveRepsValue(set.reps, -1))}
-                  >
-                    -
-                  </button>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={set.reps ?? ""}
-                    placeholder="0"
-                    aria-label={t("active.reps", { index: index + 1 })}
-                    onChange={(event) => onSetChange(currentIndex, index, "reps", event.target.value)}
-                  />
-                  <button
-                    className="active-set-step-button minus-pw"
-                    type="button"
-                    aria-label={t("active.increaseReps", { index: index + 1 })}
-                    onClick={() => onSetChange(currentIndex, index, "reps", adjustActiveRepsValue(set.reps, 1))}
-                  >
-                    +
-                  </button>
-                  <span>{t("units.reps")}</span>
-                </div>
+                <ActiveSetInputs
+                  set={set}
+                  index={index}
+                  exerciseIndex={currentIndex}
+                  weightUnit={weightUnit}
+                  inputUnit={inputUnit}
+                  onSetChange={onSetChange}
+                />
                 <button
                   className="active-set-remove-button"
                   type="button"
@@ -6642,7 +6824,7 @@ function BottomSheet({ ariaLabel, backdropLabel, className = "", onClose, childr
   );
 
   return (
-    <motion.div className="template-select-layer" role="presentation">
+    <motion.div className="template-select-layer" role="presentation" inert={!isPresent}>
       <motion.button
         className="template-select-backdrop"
         type="button"
@@ -6987,17 +7169,34 @@ function ActiveExerciseReplacementSheet({ data, selector, session, onClose, onSe
 
 export default function Gymbe() {
   const [practice, setPractice] = useState(null);
-  const [returnTo, setReturnTo] = useState("overview");
-  const start = useCallback(async () => {
+  const [returnState, setReturnState] = useState(null);
+  const start = useCallback(async (mode, firstWorkout) => {
     const entry = window.history.state;
-    const { createPracticeStore, Guide } = await import("./ui/GuidedLearning.jsx");
-    if (window.history.state !== entry || entry?.learning) return;
-    const method = entry?.overlay === "learningOffer" ? "replaceState" : "pushState";
-    window.history[method]({ learning: true }, "");
-    setReturnTo(entry?.homeView?.name === "settings" ? "settings" : "overview");
-    setPractice({ store: createPracticeStore(), Guide });
+    const { createPracticeStore, Guide } = mode === "intro"
+      ? await import("./ui/GuidedLearning.jsx")
+      : await import("./ui/WorkoutLearningGuide.jsx");
+    const store = createPracticeStore(mode === "intro" ? "intro" : "workout");
+    const data = await store.loadAppData();
+    if (window.history.state !== entry || entry?.learning) return false;
+
+    if (firstWorkout) {
+      if (!takeWorkoutLearningOffer()) return false;
+      window.history.pushState(createHistoryEntry(firstWorkout), "");
+      window.history.pushState({ learning: true }, "");
+      setReturnState(firstWorkout);
+    } else {
+      const fromLearningOverlay = entry?.overlay === "learningOffer" || entry?.overlay === OVERLAYS.learningPicker;
+      const method = fromLearningOverlay ? "replaceState" : "pushState";
+      window.history[method]({ learning: true }, "");
+      setReturnState(entry?.homeView?.name === "settings" ? { homeView: entry.homeView } : null);
+    }
+    setPractice({ store, Guide, data, fromFirstWorkout: Boolean(firstWorkout) });
+    return true;
   }, []);
   const exit = useCallback(() => setPractice(null), []);
+  useEffect(() => {
+    if (!practice && returnState?.data) setReturnState(null);
+  }, [practice, returnState]);
   return <App key={practice ? "practice" : "live"} practice={practice} onLearn={start}
-    returnTo={practice ? "overview" : returnTo} onExitLearning={exit} />;
+    returnState={practice ? null : returnState} onExitLearning={exit} />;
 }

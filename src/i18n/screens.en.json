@@ -9,6 +9,23 @@
     "label": "Walkthrough",
     "continue": "Continue",
     "done": "Finish walkthrough",
+    "workout": {
+      "pickerTitle": "How to use Gymbe",
+      "introOption": "Getting started with Gymbe",
+      "workoutOption": "Workout tips",
+      "label": "Practice workout",
+      "steps": {
+        "history": "Your actions only affect this practice workout. Tap “Last time” to open the exercise history.",
+        "historyBack": "Here you can see the weight and reps from the previous workout. Tap the back arrow to return to your sets.",
+        "replacement": "Tap “Replace exercise” to pick an alternative if the machine is in use.",
+        "replacementList": "Tap the highlighted exercise in the list. The change applies only to the current workout.",
+        "conversion": "If the machine uses a different unit, tap the conversion button to enter the weight in that unit.",
+        "conversionInput": "Enter 25 to see the converted weight on the right. Tap outside the weight field or tap Done on the keyboard. When the reps field returns, enter 10 and tap Continue.",
+        "addSet": "Tap “Add set” to copy the previous set’s weight and reps into the new set.",
+        "setTime": "Tap the number next to the second set to see when you added it.",
+        "timeResult": "Here you can see when the set was added and how much time has passed since then."
+      }
+    },
     "steps": {
       "duplicate": "Chest already has a template with this name. Enter a different name.",
       "loading": "Opening your practice workout…",
@@ -132,6 +149,10 @@
     "advice": "Tip:",
     "closeSetTime": "Close set time",
     "addSet": "Add set",
+    "convertWeight": "Convert {{from}} to {{to}}",
+    "showPounds": "Show weight in lb",
+    "showKilograms": "Show weight in kg",
+    "convertedWeight": "Converted weight for set {{index}} is {{value}} {{unit}}. Enter reps",
     "previousExercise": "Previous",
     "nextExercise": "Next exercise",
     "finishWorkout": "Finish workout",
@@ -140,7 +161,7 @@
     "showSetTime": "Show when set {{index}} was added",
     "setTimeMissing": "No time recorded for set {{index}}",
     "decreaseWeight": "Decrease weight for set {{index}}",
-    "weight": "Weight for set {{index}}",
+    "weight": "Weight for set {{index}} in {{unit}}",
     "increaseWeight": "Increase weight for set {{index}}",
     "decreaseReps": "Decrease reps for set {{index}}",
     "reps": "Reps for set {{index}}",
