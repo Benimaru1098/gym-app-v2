@@ -192,7 +192,7 @@ function useSpotlight(selector, blurOnOutsidePress, keepContentVisible, tipRef, 
       if (!isAllowed(e.target) && !(e.type === "submit" && isAllowed(e.submitter))) {
         if (blurOnOutsidePress && e.type === "pointerdown") {
           const focused = document.activeElement;
-          if (focused instanceof HTMLInputElement && target?.contains(focused)) focused.blur();
+          if (focused instanceof HTMLElement && target?.contains(focused)) focused.blur();
         }
         e.preventDefault();
         e.stopImmediatePropagation();
